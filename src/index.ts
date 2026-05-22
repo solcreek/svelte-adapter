@@ -1,6 +1,7 @@
 import type { Adapter } from "@sveltejs/kit";
 
 import { adapt } from "./adapt.js";
+import { createCache } from "./cache-handler.js";
 import {
   normalizeEnv,
   type CreekdEnv,
@@ -121,6 +122,22 @@ export default function adapter(
       // $app/server `read()` works on both bun and node: the entry
       // wires builder.init({ read }) to read from server/<file>.
       read: () => true,
+    },
+
+    // Inject platform.cache during `vite dev` and prerender so user
+    // code that calls platform.cache.cached(...) doesn't need to
+    // branch on dev vs prod. The dev cache shares the same L2 dir
+    // as production (default .creek/svelte-cache) so hot SSR data
+    // survives dev-server restarts too.
+    emulate() {
+      const cache = createCache({
+        dir: process.env.CREEK_SVELTE_CACHE_DIR,
+        l1Entries: Number(process.env.CREEK_SVELTE_CACHE_L1) || undefined,
+        inMemoryOnly: process.env.CREEK_SVELTE_CACHE_DISABLED === "1",
+      });
+      return {
+        platform: () => ({ cache }),
+      };
     },
   };
 }

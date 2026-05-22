@@ -40,4 +40,24 @@ describe("adapter factory", () => {
     // bundle:"esbuild" is the planned P1 value; reject it until shipped.
     expect(() => adapter({ bundle: "esbuild" as unknown as false })).toThrow(/bundle/);
   });
+
+  it("provides emulate().platform() with a cache instance", async () => {
+    const a = adapter();
+    expect(typeof a.emulate).toBe("function");
+    const emulator = await a.emulate!();
+    expect(typeof emulator.platform).toBe("function");
+    const platform = await emulator.platform!({
+      config: {} as never,
+      prerender: false as never,
+    });
+    expect(platform).toBeDefined();
+    const cache = (platform as { cache?: unknown }).cache as {
+      set: (k: string, v: unknown) => Promise<void>;
+      get: (k: string) => Promise<{ value: unknown } | null>;
+    } | undefined;
+    expect(cache).toBeDefined();
+    await cache!.set("emulate-test", "ok");
+    const hit = await cache!.get("emulate-test");
+    expect(hit?.value).toBe("ok");
+  });
 });

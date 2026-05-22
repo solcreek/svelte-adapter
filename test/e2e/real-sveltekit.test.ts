@@ -230,6 +230,27 @@ d("real SvelteKit fixture", () => {
     expect(body).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/url$/);
   });
 
+  it("platform.cache is present on event.platform", async () => {
+    const res = await fetch(`${h.base}/cache?op=has`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("yes");
+  });
+
+  it("platform.cache round-trips set/get inside +server.ts", async () => {
+    await fetch(`${h.base}/cache?op=set&key=real-roundtrip&value=alive`);
+    const res = await fetch(`${h.base}/cache?op=get&key=real-roundtrip`);
+    expect(await res.text()).toBe("alive");
+  });
+
+  it("platform.cache.cached() memoizes inside +server.ts", async () => {
+    const r1 = await fetch(`${h.base}/cache?op=cached&key=real-cached`);
+    const r2 = await fetch(`${h.base}/cache?op=cached&key=real-cached`);
+    const v1 = await r1.text();
+    const v2 = await r2.text();
+    expect(v1).toBe(v2);
+    expect(v1).toMatch(/^loaded-\d+$/);
+  });
+
   it("serves prerendered SPA fallback assets with immutable cache", async () => {
     // Find a hashed chunk under _app/immutable by listing the dir.
     const immutableDir = path.join(FIXTURE_DIR, "build", "client", "_app", "immutable");
