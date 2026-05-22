@@ -7,17 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-22
+
+A verification-and-validation release. No user-facing API changes since
+0.2.0; the work proves the adapter behaves correctly against real
+toolchains (real `creekd`, real `vite build` + `Server.respond`,
+real `@sveltejs/kit` Server) and sets up the machinery to stay aligned
+with upstream kit releases without manual babysitting.
+
 ### Added
 
 - `pnpm bench` — head-to-head HTTP benchmark vs `@sveltejs/adapter-node`
   on the same SvelteKit fixture. `/bench/slow` (50 ms simulated work)
   matches `adapter-node` exactly (191 req/s, 52 ms p50); `/bench/cached`
   via `platform.cache.cached` reaches **11,680 req/s at 0.67 ms p50**
-  (~78× faster p50, ~61× higher throughput).
-- `@sveltejs/adapter-node` as a devDependency of the bench fixture, plus
-  a `BENCH_ADAPTER=node` switch in `svelte.config.js` so one fixture
-  builds either way.
-- README "Benchmark vs `@sveltejs/adapter-node`" section.
+  (~78× faster p50, ~61× higher throughput). README "Benchmark vs
+  `@sveltejs/adapter-node`" section documents methodology and numbers.
+- `@sveltejs/adapter-node` as a devDependency of the bench fixture,
+  plus a `BENCH_ADAPTER=node` switch in `svelte.config.js` so one
+  fixture builds either way.
 - `scripts/test-creekctl-integration.sh` — end-to-end test against
   real `creekd` + `creekctl` binaries from the sibling repo. Validates
   that the `.creek-creekd/manifest.json` we emit is consumable by
@@ -26,11 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every surface (SSR, prerender, +server.ts, `$app/server` `read()`,
   `platform.cache`) still works through the full chain.
 - Adapter conformance suite: 8 routes in the real-sveltekit fixture
-  exercising hooks.server.js, cookies set/get/delete, event.setHeaders,
-  throw redirect, ReadableStream streaming, `$env/dynamic/private`,
-  throw error, and form actions through the full adapter chain.
-  Catches breakage when `@sveltejs/kit` ships behavioural changes
-  or when our entry's header/body bridging regresses.
+  exercising `hooks.server.js`, `cookies.set/get/delete`,
+  `event.setHeaders`, `throw redirect`, `ReadableStream` streaming,
+  `$env/dynamic/private`, `throw error`, and form actions through the
+  full adapter chain. Catches breakage when `@sveltejs/kit` ships
+  behavioural changes or when our entry's header/body bridging
+  regresses.
 - `.github/workflows/kit-canary.yml` — weekly cron (Mon 08:00 UTC) +
   manual dispatch. Bumps the fixture's `@sveltejs/kit` to `@latest`
   and runs the full test suite. On failure, auto-opens (or comments
@@ -154,6 +163,7 @@ self-host, with Bun as a first-class runtime alongside Node.
   prerendered routes, `+server.ts` GET/POST, `$app/server read()`, and
   immutable cache headers on hashed assets.
 
-[Unreleased]: https://github.com/solcreek/svelte-adapter/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/solcreek/svelte-adapter/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/solcreek/svelte-adapter/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/solcreek/svelte-adapter/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/solcreek/svelte-adapter/releases/tag/v0.1.0
