@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `pnpm bench` — head-to-head HTTP benchmark vs `@sveltejs/adapter-node`
+  on the same SvelteKit fixture. `/bench/slow` (50 ms simulated work)
+  matches `adapter-node` exactly (191 req/s, 52 ms p50); `/bench/cached`
+  via `platform.cache.cached` reaches **11,680 req/s at 0.67 ms p50**
+  (~78× faster p50, ~61× higher throughput).
+- `@sveltejs/adapter-node` as a devDependency of the bench fixture, plus
+  a `BENCH_ADAPTER=node` switch in `svelte.config.js` so one fixture
+  builds either way.
+- README "Benchmark vs `@sveltejs/adapter-node`" section.
+
 ## [0.2.0] - 2026-05-22
 
 ### Added

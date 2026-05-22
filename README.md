@@ -145,6 +145,23 @@ process.on("sveltekit:shutdown", async (reason) => {
 });
 ```
 
+## Benchmark vs `@sveltejs/adapter-node`
+
+Same minimal SvelteKit fixture, same Node version, same hardware, 2000 requests at concurrency 10. `/bench/slow` simulates a 50 ms backend dependency; `/bench/cached` wraps it in `platform.cache.cached`.
+
+| Adapter | Endpoint | req/s | p50 (ms) | p95 (ms) | p99 (ms) |
+|---|---|---:|---:|---:|---:|
+| `@sveltejs/adapter-node` | `/bench/slow` | 191 | 52.3 | 53.8 | 55.4 |
+| `@solcreek/svelte-adapter` | `/bench/slow` | 191 | 52.2 | 53.3 | 53.9 |
+| `@solcreek/svelte-adapter` | `/bench/cached` | **11,680** | **0.67** | 2.1 | 2.8 |
+
+Two takeaways:
+
+1. **No overhead vs `adapter-node`** on the uncached path — identical throughput and latency, so adopting this adapter doesn't make anything slower.
+2. **78× faster p50** and **61× higher throughput** on the cached path. The same backend dependency, the same SvelteKit Server, just one `platform.cache.cached(...)` call.
+
+Run the benchmark yourself: `pnpm bench` (uses the fixture at `test/fixtures/real-sveltekit/`, takes ~30 s).
+
 ## Deployment
 
 This adapter does **not** bundle the entry — the runtime imports `@sveltejs/kit` from `node_modules`, exactly like `@sveltejs/adapter-node`. The deploy flow on a creekd VPS:
