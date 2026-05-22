@@ -1,0 +1,60 @@
+{
+  "name": "@solcreek/svelte-adapter",
+  "version": "0.0.1",
+  "description": "SvelteKit deployment adapter for @solcreek/creekd self-host (Bun / Node runtime)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "docs",
+    "!dist/**/*.test.*",
+    "!dist/**/*.map"
+  ],
+  "scripts": {
+    "build": "tsc && node scripts/copy-entries.mjs",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:real-e2e": "RUN_REAL_E2E=1 vitest run test/e2e/real-sveltekit.test.ts",
+    "test:watch": "vitest",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "creek",
+    "creekd",
+    "sveltekit",
+    "svelte",
+    "adapter",
+    "self-host",
+    "bun",
+    "node",
+    "deployment"
+  ],
+  "author": "SolCreek",
+  "license": "Apache-2.0",
+  "homepage": "https://creek.dev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/solcreek/svelte-adapter.git"
+  },
+  "dependencies": {
+    "@solcreek/adapter-core": "^0.2.0"
+  },
+  "peerDependencies": {
+    "@sveltejs/kit": "^2.0.0"
+  },
+  "devDependencies": {
+    "@sveltejs/kit": "^2.15.0",
+    "@types/node": "^22.13.10",
+    "typescript": "^5.8.2",
+    "vitest": "^4.1.2"
+  },
+  "packageManager": "pnpm@10.33.0"
+}
