@@ -25,6 +25,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dispatch listener (`X-Creek-App` header) to our entry, and that
   every surface (SSR, prerender, +server.ts, `$app/server` `read()`,
   `platform.cache`) still works through the full chain.
+- Adapter conformance suite: 8 routes in the real-sveltekit fixture
+  exercising hooks.server.js, cookies set/get/delete, event.setHeaders,
+  throw redirect, ReadableStream streaming, `$env/dynamic/private`,
+  throw error, and form actions through the full adapter chain.
+  Catches breakage when `@sveltejs/kit` ships behavioural changes
+  or when our entry's header/body bridging regresses.
+- `.github/workflows/kit-canary.yml` — weekly cron (Mon 08:00 UTC) +
+  manual dispatch. Bumps the fixture's `@sveltejs/kit` to `@latest`
+  and runs the full test suite. On failure, auto-opens (or comments
+  on) an issue tagged `kit-upstream-break` with the version that
+  broke us and a link to the run.
+- `renovate.json` — auto-PR for `@sveltejs/kit` patch + minor
+  (auto-merge when CI green), human-review for majors. Other
+  devDeps grouped into one weekly PR to reduce noise.
 
 ## [0.2.0] - 2026-05-22
 
