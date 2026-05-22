@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - 'v*'
+  # Manual trigger from the Actions UI / `gh workflow run` — runs the
+  # install/build/test pipeline only. The publish step is gated on
+  # github.event_name == 'push' so manual runs never accidentally
+  # release.
+  workflow_dispatch:
 
 permissions:
   id-token: write    # required for npm OIDC trusted publishing + provenance
@@ -43,4 +48,7 @@ jobs:
       # npm CLI (not pnpm publish) handles the OIDC token exchange and
       # SLSA provenance attestation. --access public is implied by
       # publishConfig in package.json but kept explicit here for clarity.
+      # Skipped on workflow_dispatch so manual verifications never
+      # accidentally cut a release.
       - run: npm publish --provenance --access public
+        if: github.event_name == 'push'
