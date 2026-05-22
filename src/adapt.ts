@@ -1,4 +1,5 @@
 import * as fs from "node:fs/promises";
+import { existsSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -32,6 +33,39 @@ function entriesDir(): string {
   // script copies src/entries/*.js into dist/entries/ verbatim — the
   // template files are not compiled by tsc.
   return fileURLToPath(new URL("./entries/", import.meta.url));
+}
+
+const RUNTIME_FILES = ["runtime.js", "cache-handler.js"] as const;
+
+// Compiled runtime modules live next to adapt.js once tsc has run.
+// We resolve relative to import.meta.url so this works whether adapt
+// is invoked from dist/ (production) or src/ via vitest (unit tests
+// run `pnpm build` first, so dist exists).
+function runtimeSourceDir(): string | null {
+  const here = fileURLToPath(new URL("./", import.meta.url));
+  const candidates = [
+    here,
+    path.join(here, "..", "dist"),
+  ];
+  for (const candidate of candidates) {
+    if (RUNTIME_FILES.every((f) => existsSync(path.join(candidate, f)))) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+async function copyRuntimeModules(out: string, log: Builder["log"]): Promise<void> {
+  const src = runtimeSourceDir();
+  if (!src) {
+    log.warn(
+      "[@solcreek/svelte-adapter] runtime modules not found — was `pnpm build` run? platform.cache will be unavailable in the build output.",
+    );
+    return;
+  }
+  for (const f of RUNTIME_FILES) {
+    await fs.copyFile(path.join(src, f), path.join(out, f));
+  }
 }
 
 async function renderEntry(
@@ -95,6 +129,11 @@ export async function adapt(
     opts.healthCheckPath,
   );
   await fs.writeFile(path.join(out, "index.js"), entrySource);
+
+  // The entry imports from "./runtime.js" — make those files available
+  // next to it so the build output runs without @solcreek/* in
+  // node_modules on target.
+  await copyRuntimeModules(out, builder.log);
 
   if (opts.precompress) {
     builder.log.minor("Compressing client + prerendered assets");

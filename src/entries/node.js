@@ -21,6 +21,9 @@ import { getRequest, setResponse } from "@sveltejs/kit/node";
 
 import { Server } from "./server/index.js";
 import { manifest } from "./manifest.js";
+// Runtime modules are copied next to this entry at adapt time so the
+// build output is self-contained — no @solcreek/* dep needed on target.
+import { createCache } from "./runtime.js";
 
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
 const CLIENT_DIR = resolve(ROOT, "client");
@@ -43,6 +46,15 @@ const ADDRESS_HEADER = (process.env.ADDRESS_HEADER || "").toLowerCase() || null;
 const XFF_DEPTH = Math.max(1, Number(process.env.XFF_DEPTH) || 1);
 const BODY_SIZE_LIMIT = Number(process.env.BODY_SIZE_LIMIT) || 524_288; // 512 KB
 const SHUTDOWN_TIMEOUT_MS = (Number(process.env.SHUTDOWN_TIMEOUT) || 30) * 1_000;
+
+// platform.cache: persistent KV exposed to user code via event.platform.
+// Lives under CREEK_SVELTE_CACHE_DIR (default ".creek/svelte-cache" relative
+// to the process cwd). Set CREEK_SVELTE_CACHE_DISABLED=1 to force in-memory.
+const cache = createCache({
+  dir: process.env.CREEK_SVELTE_CACHE_DIR,
+  l1Entries: Number(process.env.CREEK_SVELTE_CACHE_L1) || undefined,
+  inMemoryOnly: process.env.CREEK_SVELTE_CACHE_DISABLED === "1",
+});
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -194,7 +206,7 @@ const httpServer = createServer(async (req, res) => {
         bodySizeLimit: BODY_SIZE_LIMIT,
       });
       response = await server.respond(request, {
-        platform: {},
+        platform: { cache },
         getClientAddress: () => clientAddressFor(req),
       });
     } catch (err) {
@@ -244,6 +256,12 @@ async function shutdown(reason) {
       }
     }),
   );
+
+  // Flush in-flight cache writes before the socket closes — otherwise
+  // a SIGTERM mid-revalidate can leave .tmp files behind.
+  await cache.close().catch((err) => {
+    console.error("[creekd-svelte] cache.close error", err);
+  });
 
   httpServer.close(() => process.exit(0));
   setTimeout(() => {

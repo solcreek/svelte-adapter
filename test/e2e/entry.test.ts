@@ -23,7 +23,9 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 const ADAPTER_ROOT = path.resolve(__dirname, "..", "..");
 const ENTRY_SRC_DIR = path.join(ADAPTER_ROOT, "src", "entries");
+const ADAPTER_DIST_DIR = path.join(ADAPTER_ROOT, "dist");
 const ADAPTER_NODE_MODULES = path.join(ADAPTER_ROOT, "node_modules");
+const RUNTIME_FILES = ["runtime.js", "cache-handler.js"];
 
 // A stub of SvelteKit's Server: just enough surface area for the entry
 // to call new Server(manifest) / server.init() / server.respond().
@@ -62,6 +64,45 @@ export class Server {
         await fs.writeFile(file, "shutdown:" + reason);
       });
       return new Response("listener-installed");
+    }
+    // ---- Cache exercises ----
+    if (url.pathname === "/cache/has") {
+      // platform.cache must be present on the platform object so user
+      // code can use it directly without runtime checks.
+      const present = info.platform && typeof info.platform.cache?.set === "function";
+      return new Response(present ? "yes" : "no");
+    }
+    if (url.pathname === "/cache/set") {
+      const key = url.searchParams.get("key") ?? "k";
+      const value = url.searchParams.get("value") ?? "v";
+      await info.platform.cache.set(key, value);
+      return new Response("set");
+    }
+    if (url.pathname === "/cache/get") {
+      const key = url.searchParams.get("key") ?? "k";
+      const hit = await info.platform.cache.get(key);
+      return new Response(hit ? String(hit.value) : "MISS");
+    }
+    if (url.pathname === "/cache/cached") {
+      // Exercise the SWR coalescing path.
+      const key = url.searchParams.get("key") ?? "k";
+      const value = await info.platform.cache.cached(key, {}, async () => {
+        await new Promise((r) => setTimeout(r, 5));
+        return "loaded-" + Date.now();
+      });
+      return new Response(value);
+    }
+    if (url.pathname === "/cache/invalidate-tag") {
+      const tag = url.searchParams.get("tag") ?? "t";
+      await info.platform.cache.invalidateTag(tag);
+      return new Response("invalidated");
+    }
+    if (url.pathname === "/cache/set-tagged") {
+      const key = url.searchParams.get("key") ?? "k";
+      const value = url.searchParams.get("value") ?? "v";
+      const tag = url.searchParams.get("tag") ?? "t";
+      await info.platform.cache.set(key, value, { tags: [tag] });
+      return new Response("set-tagged");
     }
     if (url.pathname === "/stream") {
       const stream = new ReadableStream({
@@ -116,6 +157,12 @@ async function buildSyntheticTree(runtime: "node" | "bun", port: number, healthP
     .replace(/__CREEK_PORT__/g, String(port))
     .replace(/__CREEK_HEALTH__/g, JSON.stringify(healthPath));
   await fs.writeFile(path.join(buildDir, "index.js"), entry);
+
+  // The entry imports `./runtime.js` (which transitively imports
+  // ./cache-handler.js) — mirror what adapt() does in production.
+  for (const f of RUNTIME_FILES) {
+    await fs.copyFile(path.join(ADAPTER_DIST_DIR, f), path.join(buildDir, f));
+  }
 
   return tmp;
 }
@@ -432,6 +479,55 @@ function describeRuntime(runtime: "node" | "bun", available: boolean): void {
       } finally {
         await fs.rm(shHarness.tmp, { recursive: true, force: true });
         await fs.rm(sentinel, { force: true });
+      }
+    });
+
+    it("exposes platform.cache to user code", async () => {
+      const res = await fetch(`${h.base}/cache/has`);
+      expect(await res.text()).toBe("yes");
+    });
+
+    it("platform.cache round-trips simple set/get", async () => {
+      await fetch(`${h.base}/cache/set?key=alpha&value=hello`);
+      const got = await fetch(`${h.base}/cache/get?key=alpha`);
+      expect(await got.text()).toBe("hello");
+    });
+
+    it("platform.cache.cached() memoizes the loader", async () => {
+      const r1 = await fetch(`${h.base}/cache/cached?key=memo1`);
+      const v1 = await r1.text();
+      const r2 = await fetch(`${h.base}/cache/cached?key=memo1`);
+      const v2 = await r2.text();
+      expect(v1).toBe(v2);
+      expect(v1).toMatch(/^loaded-\d+$/);
+    });
+
+    it("platform.cache tag invalidation makes entries stale", async () => {
+      await fetch(`${h.base}/cache/set-tagged?key=t1&value=fresh&tag=group-a`);
+      expect(await (await fetch(`${h.base}/cache/get?key=t1`)).text()).toBe("fresh");
+      await new Promise((r) => setTimeout(r, 5)); // ensure timestamp moves
+      await fetch(`${h.base}/cache/invalidate-tag?tag=group-a`);
+      expect(await (await fetch(`${h.base}/cache/get?key=t1`)).text()).toBe("MISS");
+    });
+
+    it("platform.cache survives a process restart (L2 persistence)", async () => {
+      // Use a stable cache dir + key so the second harness sees the
+      // value the first one wrote.
+      const cacheDir = path.join(os.tmpdir(), `creek-cache-${runtime}-${Date.now()}`);
+      const first = await bringUp(runtime, { CREEK_SVELTE_CACHE_DIR: cacheDir });
+      try {
+        await fetch(`${first.base}/cache/set?key=persist&value=survived`);
+      } finally {
+        await tearDown(first);
+      }
+
+      const second = await bringUp(runtime, { CREEK_SVELTE_CACHE_DIR: cacheDir });
+      try {
+        const res = await fetch(`${second.base}/cache/get?key=persist`);
+        expect(await res.text()).toBe("survived");
+      } finally {
+        await tearDown(second);
+        await fs.rm(cacheDir, { recursive: true, force: true });
       }
     });
 

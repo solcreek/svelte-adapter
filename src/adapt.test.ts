@@ -207,6 +207,20 @@ describe("adapt", () => {
     expect(existsSync(path.join(buildDir, "stale.txt"))).toBe(false);
   });
 
+  it("copies runtime modules next to the entry for self-contained output", async () => {
+    const builder = createMockBuilder();
+    await adapt(builder, {
+      outDir: "build",
+      runtime: "node",
+      port: 3000,
+      env: [],
+      healthCheckPath: "/_creek/health",
+      precompress: false,
+    });
+    expect(existsSync(path.join(tmp, "build", "runtime.js"))).toBe(true);
+    expect(existsSync(path.join(tmp, "build", "cache-handler.js"))).toBe(true);
+  });
+
   it("invokes builder.generateEnvModule so $env/dynamic/public works", async () => {
     const builder = createMockBuilder();
     await adapt(builder, {

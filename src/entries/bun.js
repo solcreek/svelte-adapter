@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import { Server } from "./server/index.js";
 import { manifest } from "./manifest.js";
+import { createCache } from "./runtime.js";
 
 const ROOT = fileURLToPath(new URL(".", import.meta.url));
 const CLIENT_DIR = resolve(ROOT, "client");
@@ -27,6 +28,12 @@ const ADDRESS_HEADER = (process.env.ADDRESS_HEADER || "").toLowerCase() || null;
 const XFF_DEPTH = Math.max(1, Number(process.env.XFF_DEPTH) || 1);
 const BODY_SIZE_LIMIT = Number(process.env.BODY_SIZE_LIMIT) || 524_288;
 const SHUTDOWN_TIMEOUT_MS = (Number(process.env.SHUTDOWN_TIMEOUT) || 30) * 1_000;
+
+const cache = createCache({
+  dir: process.env.CREEK_SVELTE_CACHE_DIR,
+  l1Entries: Number(process.env.CREEK_SVELTE_CACHE_L1) || undefined,
+  inMemoryOnly: process.env.CREEK_SVELTE_CACHE_DISABLED === "1",
+});
 
 const server = new Server(manifest);
 await server.init({
@@ -165,7 +172,7 @@ const httpServer = Bun.serve({
 
       const srvAddr = srv.requestIP(request)?.address;
       return await server.respond(finalRequest, {
-        platform: {},
+        platform: { cache },
         getClientAddress: () => clientAddressFor(request, srvAddr),
       });
     } catch (err) {
@@ -196,6 +203,10 @@ async function shutdown(reason) {
       }
     }),
   );
+
+  await cache.close().catch((err) => {
+    console.error("[creekd-svelte] cache.close error", err);
+  });
 
   httpServer.stop();
   setTimeout(() => process.exit(0), 100).unref();
