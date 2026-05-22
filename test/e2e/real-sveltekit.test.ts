@@ -108,7 +108,14 @@ interface Harness {
 async function spawnEntry(port: number, env: NodeJS.ProcessEnv): Promise<Harness> {
   const child = spawn(process.execPath, ["build/index.js"], {
     cwd: FIXTURE_DIR,
-    env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", ...env },
+    env: {
+      ...process.env,
+      PORT: String(port),
+      HOST: "127.0.0.1",
+      // Surface a known value to the $env/dynamic/private conformance probe.
+      CONFORMANCE_SECRET: "secret-value-42",
+      ...env,
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   child.stdout?.on("data", () => {});
@@ -249,6 +256,82 @@ d("real SvelteKit fixture", () => {
     const v2 = await r2.text();
     expect(v1).toBe(v2);
     expect(v1).toMatch(/^loaded-\d+$/);
+  });
+
+  // ---- Conformance suite: SvelteKit features external adapters must honor ----
+
+  it("conformance: hooks.server.js handle() runs on every request", async () => {
+    // Probe a SSR route, a +server.ts route, and a prerendered route
+    // (prerendered is static — hooks should NOT touch it).
+    const ssr = await fetch(`${h.base}/`);
+    expect(ssr.headers.get("x-creek-hook")).toBe("ok");
+    const api = await fetch(`${h.base}/api/ping`);
+    expect(api.headers.get("x-creek-hook")).toBe("ok");
+  });
+
+  it("conformance: cookies.set/get/delete round-trip Set-Cookie headers", async () => {
+    const set = await fetch(`${h.base}/conformance/cookies?op=set`);
+    expect(set.status).toBe(200);
+    const setCookie = set.headers.get("set-cookie") ?? "";
+    expect(setCookie).toMatch(/creek-test=from-sveltekit/);
+    expect(setCookie.toLowerCase()).toContain("httponly");
+
+    // Echo the cookie back to verify the entry forwards it to SvelteKit.
+    const read = await fetch(`${h.base}/conformance/cookies?op=read`, {
+      headers: { cookie: "creek-test=from-sveltekit" },
+    });
+    expect(await read.text()).toBe("from-sveltekit");
+  });
+
+  it("conformance: event.setHeaders() propagates to the response", async () => {
+    const res = await fetch(`${h.base}/conformance/headers`);
+    expect(res.headers.get("x-custom-via-setheaders")).toBe("yes");
+    expect(res.headers.get("cache-control")).toContain("max-age=3600");
+  });
+
+  it("conformance: throw redirect(302, '/about') yields 302 + Location", async () => {
+    // `redirect: "manual"` so fetch doesn't auto-follow and hide the 302.
+    const res = await fetch(`${h.base}/conformance/redirect`, { redirect: "manual" });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/about");
+  });
+
+  it("conformance: ReadableStream response is streamed, not buffered", async () => {
+    const res = await fetch(`${h.base}/conformance/streaming`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("chunk-a|chunk-b|chunk-c");
+  });
+
+  it("conformance: $env/dynamic/private reads runtime env vars", async () => {
+    const res = await fetch(`${h.base}/conformance/env`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("secret-value-42");
+  });
+
+  it("conformance: throw error(418, ...) yields the requested status code", async () => {
+    const res = await fetch(`${h.base}/conformance/error?status=418`);
+    expect(res.status).toBe(418);
+  });
+
+  it("conformance: form action receives multipart body and returns data", async () => {
+    const form = new URLSearchParams({ who: "world" });
+    const res = await fetch(`${h.base}/conformance/form`, {
+      method: "POST",
+      body: form,
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        // SvelteKit's CSRF default trusts same-origin form posts; the
+        // X-Sveltekit-Action header forces the action runner without
+        // a referrer dance.
+        "x-sveltekit-action": "true",
+      },
+      redirect: "manual",
+    });
+    // ActionResult returns 200 with serialized data for non-throw cases;
+    // body shape is the {type:"success", data:...} envelope.
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("hello world");
   });
 
   it("serves prerendered SPA fallback assets with immutable cache", async () => {
