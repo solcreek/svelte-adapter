@@ -29,6 +29,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:real-e2e": "RUN_REAL_E2E=1 vitest run test/e2e/real-sveltekit.test.ts",
+    "bench": "pnpm build && node scripts/bench.mjs",
     "test:watch": "vitest",
     "clean": "rm -rf dist"
   },
