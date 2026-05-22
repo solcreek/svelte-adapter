@@ -1,0 +1,46 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  id-token: write    # required for npm OIDC trusted publishing + provenance
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          # No cache: release builds must not reuse a stale dep tree.
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      # Includes the real SvelteKit fixture build under RUN_REAL_E2E=1
+      # so we never publish a tag that hasn't booted a real svelte-kit
+      # app end-to-end.
+      - run: pnpm test
+        env:
+          RUN_REAL_E2E: '1'
+
+      # npm CLI (not pnpm publish) handles the OIDC token exchange and
+      # SLSA provenance attestation. --access public is implied by
+      # publishConfig in package.json but kept explicit here for clarity.
+      - run: npm publish --provenance --access public
