@@ -4,9 +4,17 @@ SvelteKit deployment adapter for [`@solcreek/creekd`](https://github.com/solcree
 
 Pairs creekd's neutral process supervisor (cgroups, namespaces, dispatch, health probes) with SvelteKit-shaped defaults: prerendered fast-path, hashed-asset immutable caching, `X-Forwarded-*` aware URL rebuilding, `sveltekit:shutdown` graceful drain.
 
+```
+@sveltejs/adapter-node    /bench/slow      ⏤  191 req/s  ·  52 ms p50
+@solcreek/svelte-adapter  /bench/slow      ⏤  191 req/s  ·  52 ms p50   (zero overhead)
+@solcreek/svelte-adapter  /bench/cached    ⏤  11,680 req/s · 0.67 ms p50  ← platform.cache
+```
+
+`pnpm bench` reproduces these numbers on your machine. The cached path uses `event.platform.cache` (L1 LRU + L2 filesystem, survives restart, tag invalidation) — see [Benchmark](#benchmark-vs-sveltejsadapter-node) and [`platform.cache`](#platformcache--persistent-kv-for-sveltekit-the-differentiator-vs-adapter-node).
+
 ## Status
 
-Pre-1.0. Targets SvelteKit ≥ 2.0. P0 ships the runtime parity table below; P1 will add `platform.cache` (persistent KV via `bun:sqlite` / fs) for SvelteKit-side caching, dev `emulate()`, and opt-in esbuild bundling.
+Pre-1.0, targets SvelteKit ≥ 2.0. The adapter is feature-complete vs `@sveltejs/adapter-node` (same env-var surface, same `sveltekit:shutdown` contract, same `node_modules`-on-target deployment model) and adds `platform.cache` as its differentiator. Self-host, Bun runtime, and `creekctl` integration are first-class.
 
 ## Install
 
@@ -177,20 +185,19 @@ The output tree (`build/` + `node_modules/`) is what creekd spawns. If your depl
 
 ## Comparison with `@sveltejs/adapter-node`
 
-Drop-in for almost everything `adapter-node` does:
+| | `@sveltejs/adapter-node` | `@solcreek/svelte-adapter` |
+|---|---|---|
+| Env-var surface (PORT, HOST, ORIGIN, PROTOCOL_HEADER, BODY_SIZE_LIMIT, …) | ✓ | ✓ identical |
+| `sveltekit:shutdown` event contract | ✓ | ✓ identical |
+| `node_modules` on target | required | required |
+| Bun runtime support | — | ✓ first-class (`runtime: "bun"`) |
+| Polka HTTP server | yes | — direct `node:http` / `Bun.serve`, no extra dep |
+| Creekd process manifest (`.creek-creekd/manifest.json`) | — | ✓ `creekctl up --from` reads it |
+| Configurable health probe path baked into the entry | — | ✓ (default `/_creek/health`) |
+| Persistent KV on `event.platform` (`platform.cache`) | — | ✓ L1 LRU + L2 fs, tag invalidation, SWR |
+| `Emulator.platform()` for dev parity | — | ✓ same cache in `vite dev` / prerender |
 
-- Identical env-var surface (PORT/HOST/ORIGIN/PROTOCOL_HEADER/…)
-- Same `sveltekit:shutdown` event contract
-- Same body-size enforcement
-- Same `node_modules`-on-target deployment assumption
-
-The differences:
-
-- Emits a creekd `manifest.json` so `creekctl` can supervise the process (cgroup limits, dispatch, restart policy) — `adapter-node` ends at "produce build/index.js".
-- Bun runtime is a first-class option, not a footnote.
-- No Polka — direct `node:http` (and `Bun.serve` on Bun); fewer moving parts, no extra deps.
-- Health probe is built into the entry at a configurable path so creekd doesn't need to know about it.
-- `platform.cache` — persistent KV in `event.platform` with tag invalidation and SWR. `adapter-node` does not provide this.
+On the apples-to-apples path (no caching), throughput and latency are identical — adopting this adapter doesn't make anything slower. See [Benchmark](#benchmark-vs-sveltejsadapter-node) for the numbers and methodology.
 
 ## License
 
