@@ -1,6 +1,6 @@
 {
   "name": "@solcreek/svelte-adapter",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "SvelteKit deployment adapter for @solcreek/creekd self-host (Bun / Node runtime)",
   "type": "module",
   "main": "./dist/index.js",
@@ -13,10 +13,12 @@
   },
   "files": [
     "dist",
-    "docs",
     "!dist/**/*.test.*",
     "!dist/**/*.map"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc && node scripts/copy-entries.mjs",
     "dev": "tsc --watch",
