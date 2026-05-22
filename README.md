@@ -57,6 +57,66 @@ creekctl up --from .creek-creekd/manifest.json
 | `precompress` | `true` | gzip + brotli on `client/` and `prerendered/`. |
 | `bundle` | `false` | Reserved for P1 — opt-in esbuild bundling. P0 only accepts `false`. See [Deployment](#deployment). |
 
+## `platform.cache` — persistent KV for SvelteKit (the differentiator vs `adapter-node`)
+
+SvelteKit doesn't ship a first-class ISR or cache-handler primitive — there's no equivalent of Next.js's `cacheHandler`. This adapter exposes a small persistent cache on `event.platform.cache` so user code can do tag-invalidated, restart-surviving caching without bolting on Redis just to self-host.
+
+```ts
+// src/routes/+page.server.ts
+export async function load({ platform }) {
+  return {
+    feed: await platform.cache.cached(
+      "homepage-feed:v1",
+      { revalidate: 60, tags: ["feed"] },
+      async () => {
+        // expensive query — runs once per minute (or after invalidateTag)
+        return await db.feed.recent();
+      },
+    ),
+  };
+}
+
+// src/routes/api/publish/+server.ts
+export async function POST({ platform, request }) {
+  await db.posts.insert(await request.json());
+  await platform.cache.invalidateTag("feed");
+  return new Response(null, { status: 204 });
+}
+```
+
+**Implementation:**
+- **L1**: in-process LRU (insertion-order Map; default 2048 entries)
+- **L2**: filesystem JSON at `$CREEK_SVELTE_CACHE_DIR/entries/<hash[0:2]>/<hash>.json`, atomic write via tmp+rename
+- **Tags**: per-tag `tags/<safe>.json` sentinel with `{ invalidatedAt }`; entries are stale if any of their tags was invalidated after `entry.createdAt`
+- **SWR**: `cached()` returns stale data while a background loader refreshes; coalesces concurrent misses for the same key
+- **Dev parity**: `adapter.emulate()` provides the same cache in `vite dev` and prerender via `event.platform.cache` — no `if (import.meta.env.DEV)` branches needed
+- **Graceful shutdown**: cache is closed (in-flight writes flushed) after `sveltekit:shutdown` listeners run
+
+### Cache env vars
+
+| Var | Default | Effect |
+|---|---|---|
+| `CREEK_SVELTE_CACHE_DIR` | `.creek/svelte-cache` (relative to cwd) | L2 directory |
+| `CREEK_SVELTE_CACHE_L1` | `2048` | L1 LRU capacity (entries) |
+| `CREEK_SVELTE_CACHE_DISABLED` | unset | When `=1`, skip L2 entirely (in-memory only) |
+
+### App.Platform typing
+
+To get autocomplete on `event.platform.cache`, declare it in your project's `src/app.d.ts`:
+
+```ts
+import type { CreekdSvelteCache } from "@solcreek/svelte-adapter/runtime";
+
+declare global {
+  namespace App {
+    interface Platform {
+      cache: CreekdSvelteCache;
+    }
+  }
+}
+export {};
+```
+
 ## Runtime environment variables
 
 The generated entry honours the same env vars as `@sveltejs/adapter-node`, so existing Svelte deployment knowledge transfers directly:
@@ -113,7 +173,7 @@ The differences:
 - Bun runtime is a first-class option, not a footnote.
 - No Polka — direct `node:http` (and `Bun.serve` on Bun); fewer moving parts, no extra deps.
 - Health probe is built into the entry at a configurable path so creekd doesn't need to know about it.
-- Will gain `platform.cache` (persistent KV in `event.platform`) in P1, which `adapter-node` does not provide.
+- `platform.cache` — persistent KV in `event.platform` with tag invalidation and SWR. `adapter-node` does not provide this.
 
 ## License
 
