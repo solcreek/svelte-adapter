@@ -22,7 +22,7 @@ jobs:
 
       # pnpm version is sourced from package.json `packageManager` —
       # do not also specify it here, the action errors on mismatch.
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
       - uses: actions/setup-node@v5
         with:
