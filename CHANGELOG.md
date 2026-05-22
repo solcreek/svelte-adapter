@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a `BENCH_ADAPTER=node` switch in `svelte.config.js` so one fixture
   builds either way.
 - README "Benchmark vs `@sveltejs/adapter-node`" section.
+- `scripts/test-creekctl-integration.sh` — end-to-end test against
+  real `creekd` + `creekctl` binaries from the sibling repo. Validates
+  that the `.creek-creekd/manifest.json` we emit is consumable by
+  `creekctl up --from`, that creekd routes traffic through the
+  dispatch listener (`X-Creek-App` header) to our entry, and that
+  every surface (SSR, prerender, +server.ts, `$app/server` `read()`,
+  `platform.cache`) still works through the full chain.
 
 ## [0.2.0] - 2026-05-22
 
