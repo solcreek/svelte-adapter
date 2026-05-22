@@ -1,0 +1,46 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":semanticCommits",
+    ":disableDependencyDashboard"
+  ],
+  "labels": ["dependencies"],
+  "schedule": ["before 6am on monday"],
+  "timezone": "UTC",
+  "rangeStrategy": "bump",
+  "packageRules": [
+    {
+      "description": "@sveltejs/kit patch + minor: auto-merge when CI green. Majors hold for review.",
+      "matchPackageNames": ["@sveltejs/kit"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "automerge": true,
+      "automergeType": "pr",
+      "automergeStrategy": "squash",
+      "labels": ["dependencies", "kit-update"]
+    },
+    {
+      "description": "@sveltejs/kit major: open PR, do not auto-merge — needs human review.",
+      "matchPackageNames": ["@sveltejs/kit"],
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "labels": ["dependencies", "kit-major", "needs-review"]
+    },
+    {
+      "description": "Pin GitHub Actions to a SHA-resolvable tag (security best practice).",
+      "matchManagers": ["github-actions"],
+      "pinDigests": true
+    },
+    {
+      "description": "Group all non-major devDependency bumps into one PR per week to reduce noise.",
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "groupName": "devDependencies (non-major)",
+      "schedule": ["before 6am on monday"]
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security"]
+  }
+}
