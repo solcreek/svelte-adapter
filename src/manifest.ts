@@ -6,7 +6,7 @@ import {
   isCreekdDeployManifest,
   type CreekdDeployManifest,
   type CreekdRuntime,
-} from "@solcreek/adapter-core";
+} from "@solcreek/creekd-manifest";
 
 const require = createRequire(import.meta.url);
 const adapterPackage = require("../package.json") as {

@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { isCreekdDeployManifest } from "@solcreek/adapter-core";
+import { isCreekdDeployManifest } from "@solcreek/creekd-manifest";
 
 import { normalizeEnv, writeManifest } from "./manifest.js";
 
