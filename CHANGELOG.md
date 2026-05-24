@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-23
+
+### Added
+
+- `fallback` adapter option — passes through to
+  `builder.generateFallback()` and writes a static HTML shell into
+  the prerendered output. The server entry serves it on any SSR 404;
+  status code follows the filename (`404.html` → 404, anything else
+  → 200). Matches the surface adapter-static / adapter-cloudflare
+  expose for SPA-mode apps and styled custom 404 pages.
+- `builder.findServerAssets()` integration — assets imported by
+  server code (`import logo from './logo.png'` from a +page.server.ts)
+  are now defensively copied next to the server bundle so the
+  entry's `read()` callback resolves them. No-op for the common
+  case where writeServer already inlined them.
+
+### Changed
+
+- Entry templates gain a `__CREEK_FALLBACK__` placeholder substituted
+  at adapt time. Existing entries without fallback keep working —
+  the placeholder becomes `null` and the fallback branch is dead-code.
+
 ## [0.6.0] - 2026-05-23
 
 ### Added
