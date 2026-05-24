@@ -35,7 +35,11 @@ function entriesDir(): string {
   return fileURLToPath(new URL("./entries/", import.meta.url));
 }
 
-const RUNTIME_FILES = ["runtime.js", "cache-handler.js"] as const;
+const RUNTIME_FILES = [
+  "runtime.js",
+  "cache-handler.js",
+  "cache-handler-sqlite.js",
+] as const;
 
 // Compiled runtime modules live next to adapt.js once tsc has run.
 // We resolve relative to import.meta.url so this works whether adapt

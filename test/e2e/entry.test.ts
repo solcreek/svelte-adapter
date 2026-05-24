@@ -25,7 +25,7 @@ const ADAPTER_ROOT = path.resolve(__dirname, "..", "..");
 const ENTRY_SRC_DIR = path.join(ADAPTER_ROOT, "src", "entries");
 const ADAPTER_DIST_DIR = path.join(ADAPTER_ROOT, "dist");
 const ADAPTER_NODE_MODULES = path.join(ADAPTER_ROOT, "node_modules");
-const RUNTIME_FILES = ["runtime.js", "cache-handler.js"];
+const RUNTIME_FILES = ["runtime.js", "cache-handler.js", "cache-handler-sqlite.js"];
 
 // A stub of SvelteKit's Server: just enough surface area for the entry
 // to call new Server(manifest) / server.init() / server.respond().

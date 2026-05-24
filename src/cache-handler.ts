@@ -1,9 +1,12 @@
 // Persistent KV cache for SvelteKit `event.platform.cache`.
 //
 // Design constraints:
-// - Zero runtime deps (node:fs + node:crypto only; works on Node + Bun).
-// - Survives process restart — L2 lives on the filesystem under
-//   $CREEK_SVELTE_CACHE_DIR (default: .creek/svelte-cache/).
+// - Zero npm deps (node:fs + node:crypto on Node; bun:sqlite when
+//   selected on Bun — both shipped with the runtime).
+// - Survives process restart — L2 persistence is driver-pluggable
+//   ("fs" writes one JSON file per entry; "bun-sqlite" uses a single
+//    SQLite DB). Default driver = "auto" picks bun-sqlite on Bun and
+//    fs on Node.
 // - Hot reads are L1 (in-memory LRU). Cold L1 miss falls through to
 //   L2; L2 hit promotes to L1.
 // - Tag invalidation is global: invalidateTag(t) writes a per-tag
@@ -15,9 +18,10 @@
 //   refills the entry. Misses block on the loader.
 
 import * as fs from "node:fs/promises";
-import { existsSync } from "node:fs";
 import * as path from "node:path";
 import { createHash } from "node:crypto";
+
+export type CreekdSvelteCacheDriver = "fs" | "bun-sqlite" | "auto";
 
 export interface CreekdSvelteCacheOptions {
   /** L2 directory; created on first write. Default: ".creek/svelte-cache". */
@@ -26,6 +30,12 @@ export interface CreekdSvelteCacheOptions {
   l1Entries?: number;
   /** When true, skip L2 (in-memory only). Useful in tests and emulate(). */
   inMemoryOnly?: boolean;
+  /**
+   * L2 backend. "auto" (default) picks "bun-sqlite" when running under
+   * Bun and "fs" elsewhere; falling back to "fs" if bun:sqlite fails
+   * to load. Pin explicitly to debug or to force the slow path.
+   */
+  driver?: CreekdSvelteCacheDriver;
 }
 
 export interface CacheEntry<T = unknown> {
@@ -105,21 +115,112 @@ interface TagSentinel {
   invalidatedAt: number;
 }
 
+/**
+ * L2 persistence backend. Each driver is a thin storage adapter — the
+ * cache's L1/LRU, tag invalidation logic, SWR coalescing all live in
+ * CacheImpl and are driver-agnostic.
+ */
+export interface L2Driver {
+  getEntry<T>(key: string): Promise<CacheEntry<T> | null>;
+  setEntry<T>(key: string, entry: CacheEntry<T>): Promise<void>;
+  deleteEntry(key: string): Promise<void>;
+  /** Returns 0 if the tag has never been invalidated. */
+  getTagInvalidation(tag: string): Promise<number>;
+  setTagInvalidation(tag: string, invalidatedAt: number): Promise<void>;
+  /** Flush pending writes if the driver buffers. */
+  close(): Promise<void>;
+}
+
+class FsL2Driver implements L2Driver {
+  constructor(private readonly dir: string) {}
+
+  async getEntry<T>(key: string): Promise<CacheEntry<T> | null> {
+    const onDisk = await readJson<CacheEntry<T>>(entryPath(this.dir, key));
+    if (!onDisk || onDisk.schema !== 1) return null;
+    return onDisk;
+  }
+
+  async setEntry<T>(key: string, entry: CacheEntry<T>): Promise<void> {
+    await writeJson(entryPath(this.dir, key), entry);
+  }
+
+  async deleteEntry(key: string): Promise<void> {
+    await fs.rm(entryPath(this.dir, key), { force: true });
+  }
+
+  async getTagInvalidation(tag: string): Promise<number> {
+    const sentinel = await readJson<TagSentinel>(tagPath(this.dir, tag));
+    return sentinel?.invalidatedAt ?? 0;
+  }
+
+  async setTagInvalidation(tag: string, invalidatedAt: number): Promise<void> {
+    await writeJson(tagPath(this.dir, tag), { invalidatedAt });
+  }
+
+  async close(): Promise<void> {
+    // No buffered state — writes are flushed at rename() time.
+  }
+}
+
+/**
+ * Drives the driver selection in createCache(). Exported (not just
+ * inferred) so test harnesses can resolve "auto" identically.
+ */
+export async function resolveL2Driver(
+  driver: CreekdSvelteCacheDriver,
+  dir: string,
+): Promise<L2Driver> {
+  if (driver === "fs") return new FsL2Driver(dir);
+
+  const wantsBun = driver === "bun-sqlite"
+    || (driver === "auto" && typeof (globalThis as { Bun?: unknown }).Bun !== "undefined");
+
+  if (wantsBun) {
+    try {
+      const { createBunSqliteL2Driver } = await import("./cache-handler-sqlite.js");
+      return await createBunSqliteL2Driver(dir);
+    } catch (err) {
+      if (driver === "bun-sqlite") {
+        throw new Error(
+          `[@solcreek/svelte-adapter] cache driver "bun-sqlite" requested but bun:sqlite is unavailable: ${(err as Error).message}`,
+        );
+      }
+      // "auto" fallback — log and use fs.
+      console.warn(
+        `[@solcreek/svelte-adapter] bun-sqlite driver failed to load (${(err as Error).message}); falling back to fs driver`,
+      );
+    }
+  }
+
+  return new FsL2Driver(dir);
+}
+
 class CacheImpl implements CreekdSvelteCache {
   private readonly dir: string;
   private readonly l1Capacity: number;
   private readonly inMemoryOnly: boolean;
+  private readonly driverChoice: CreekdSvelteCacheDriver;
   // Insertion order Map gives us LRU for free: re-set on access, delete LRU on overflow.
   private readonly l1 = new Map<string, CacheEntry<unknown>>();
   // Tag invalidation memos: avoid re-reading the same sentinel file in a tight loop.
   private readonly tagMemo = new Map<string, number>();
   // In-flight background revalidators by key — coalesce duplicate work.
   private readonly inflight = new Map<string, Promise<unknown>>();
+  // Lazy driver: resolved on first L2 I/O so createCache() stays sync.
+  private driverPromise: Promise<L2Driver> | null = null;
 
   constructor(opts: CreekdSvelteCacheOptions) {
     this.dir = opts.dir ?? DEFAULT_DIR;
     this.l1Capacity = opts.l1Entries ?? DEFAULT_L1_ENTRIES;
     this.inMemoryOnly = opts.inMemoryOnly ?? false;
+    this.driverChoice = opts.driver ?? "auto";
+  }
+
+  private driver(): Promise<L2Driver> {
+    if (!this.driverPromise) {
+      this.driverPromise = resolveL2Driver(this.driverChoice, this.dir);
+    }
+    return this.driverPromise;
   }
 
   private touchL1<T>(key: string, entry: CacheEntry<T>): void {
@@ -139,8 +240,8 @@ class CacheImpl implements CreekdSvelteCache {
     for (const tag of tags) {
       let stamp = this.tagMemo.get(tag);
       if (stamp === undefined && !this.inMemoryOnly) {
-        const sentinel = await readJson<TagSentinel>(tagPath(this.dir, tag));
-        stamp = sentinel?.invalidatedAt ?? 0;
+        const driver = await this.driver();
+        stamp = await driver.getTagInvalidation(tag);
         this.tagMemo.set(tag, stamp);
       }
       if (stamp !== undefined && stamp > max) max = stamp;
@@ -168,8 +269,9 @@ class CacheImpl implements CreekdSvelteCache {
     }
     if (this.inMemoryOnly) return null;
 
-    const onDisk = await readJson<CacheEntry<T>>(entryPath(this.dir, key));
-    if (!onDisk || onDisk.schema !== 1) return null;
+    const driver = await this.driver();
+    const onDisk = await driver.getEntry<T>(key);
+    if (!onDisk) return null;
     if (await this.isStale(onDisk)) return null;
     this.touchL1(key, onDisk);
     return onDisk;
@@ -186,14 +288,16 @@ class CacheImpl implements CreekdSvelteCache {
     };
     this.touchL1(key, entry);
     if (!this.inMemoryOnly) {
-      await writeJson(entryPath(this.dir, key), entry);
+      const driver = await this.driver();
+      await driver.setEntry(key, entry);
     }
   }
 
   async delete(key: string): Promise<void> {
     this.l1.delete(key);
     if (this.inMemoryOnly) return;
-    await fs.rm(entryPath(this.dir, key), { force: true });
+    const driver = await this.driver();
+    await driver.deleteEntry(key);
   }
 
   async invalidateTag(tag: string): Promise<void> {
@@ -205,7 +309,8 @@ class CacheImpl implements CreekdSvelteCache {
       if (entry.tags.includes(tag)) this.l1.delete(k);
     }
     if (!this.inMemoryOnly) {
-      await writeJson(tagPath(this.dir, tag), { invalidatedAt: now });
+      const driver = await this.driver();
+      await driver.setTagInvalidation(tag, now);
     }
   }
 
@@ -239,6 +344,10 @@ class CacheImpl implements CreekdSvelteCache {
     // Wait for in-flight revalidates so the process doesn't exit
     // mid-write and leave a .tmp file behind.
     await Promise.allSettled([...this.inflight.values()]);
+    if (this.driverPromise) {
+      const driver = await this.driverPromise.catch(() => null);
+      if (driver) await driver.close();
+    }
     this.l1.clear();
     this.tagMemo.clear();
   }
@@ -254,4 +363,5 @@ export const __test__ = {
   safeTagFilename,
   entryPath,
   tagPath,
+  FsL2Driver,
 };
