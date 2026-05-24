@@ -60,6 +60,14 @@ export interface CreekdSvelteAdapterOptions {
    * `@sveltejs/adapter-node` does.
    */
   bundle?: false;
+  /**
+   * SPA / catch-all HTML fallback filename. When set, `builder.generateFallback`
+   * writes a static shell page at `<out>/prerendered/<fallback>` and the
+   * server entry serves it on any SSR 404. Status code follows the
+   * filename convention: `404.html` → 404, anything else (`200.html`,
+   * `index.html`, …) → 200. Leave unset to disable fallback handling.
+   */
+  fallback?: string;
 }
 
 const DEFAULT_PORT = 3000;
@@ -103,6 +111,14 @@ export default function adapter(
       "@solcreek/svelte-adapter: bundle option is reserved for a future release; pass false (default) until then",
     );
   }
+  const fallback = options.fallback;
+  if (fallback !== undefined) {
+    if (typeof fallback !== "string" || !fallback.endsWith(".html") || fallback.includes("/") || fallback.includes("\\")) {
+      throw new Error(
+        `@solcreek/svelte-adapter: fallback must be a bare .html filename (e.g. "200.html"), got ${JSON.stringify(fallback)}`,
+      );
+    }
+  }
 
   return {
     name: "@solcreek/svelte-adapter",
@@ -115,6 +131,7 @@ export default function adapter(
         env,
         healthCheckPath,
         precompress,
+        fallback,
       });
     },
 

@@ -33,6 +33,11 @@ const PRERENDERED_DIR = resolve(ROOT, "prerendered");
 const PORT = Number(process.env.PORT) || __CREEK_PORT__;
 const HOST = process.env.HOST || "0.0.0.0";
 const HEALTH_PATH = __CREEK_HEALTH__;
+// SPA / catch-all HTML filename inside PRERENDERED_DIR, or null when disabled.
+const FALLBACK = __CREEK_FALLBACK__;
+// Convention from adapter-static / adapter-cloudflare: 404.html → 404,
+// 200.html / index.html / anything-else → 200.
+const FALLBACK_STATUS = FALLBACK && FALLBACK.endsWith("404.html") ? 404 : 200;
 const IMMUTABLE_PREFIX = manifest.appPath ? `/${manifest.appPath}/immutable/` : "/_app/immutable/";
 
 // Proxy / origin handling — creekd dispatch terminates in front of this
@@ -221,6 +226,20 @@ const httpServer = createServer(async (req, res) => {
         return;
       }
       throw err;
+    }
+
+    // SPA fallback: serve the static shell on any SSR 404 so the
+    // client-side router can take over (or so a custom 404.html
+    // surfaces a styled error page).
+    if (FALLBACK && response.status === 404) {
+      const fallbackFile = resolveStaticFile(PRERENDERED_DIR, "/" + FALLBACK);
+      if (fallbackFile) {
+        res.statusCode = FALLBACK_STATUS;
+        res.setHeader("content-type", "text/html; charset=utf-8");
+        res.setHeader("content-length", String(fallbackFile.size));
+        createReadStream(fallbackFile.path).pipe(res);
+        return;
+      }
     }
 
     await setResponse(res, response);

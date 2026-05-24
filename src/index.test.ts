@@ -41,6 +41,15 @@ describe("adapter factory", () => {
     expect(() => adapter({ bundle: "esbuild" as unknown as false })).toThrow(/bundle/);
   });
 
+  it("accepts bare .html filenames for fallback and rejects paths", () => {
+    expect(() => adapter({ fallback: "200.html" })).not.toThrow();
+    expect(() => adapter({ fallback: "404.html" })).not.toThrow();
+    expect(() => adapter({ fallback: "index.html" })).not.toThrow();
+    expect(() => adapter({ fallback: "shell.txt" })).toThrow(/fallback/);
+    expect(() => adapter({ fallback: "sub/200.html" })).toThrow(/fallback/);
+    expect(() => adapter({ fallback: "..\\evil.html" })).toThrow(/fallback/);
+  });
+
   it("provides emulate().platform() with a cache instance", async () => {
     const a = adapter();
     expect(typeof a.emulate).toBe("function");

@@ -163,6 +163,20 @@ process.on("sveltekit:shutdown", async (reason) => {
 });
 ```
 
+### SPA / catch-all fallback
+
+For SPA-mode apps (everything client-rendered) or for a styled custom 404 page, pass a `fallback` filename. The adapter calls `builder.generateFallback()` to write the SvelteKit root layout as a static HTML shell into the prerendered output, and the server entry serves that file on any SSR 404:
+
+```ts
+// svelte.config.js
+import adapter from "@solcreek/svelte-adapter";
+export default {
+  kit: { adapter: adapter({ fallback: "200.html" }) },
+};
+```
+
+Status code follows the filename: `404.html` → 404, anything else (`200.html`, `index.html`, …) → 200. Prerendered hits and successful SSR responses still win — fallback only fires when SSR returns 404.
+
 ### Instrumentation (SvelteKit 2.31+)
 
 If you provide `src/instrumentation.server.ts`, this adapter wraps the generated entry so the instrumentation module loads **before** any application code — required for OpenTelemetry auto-instrumentation, logger init, DB pool warm-up, etc. No configuration needed; enable the kit feature in `svelte.config.js`:

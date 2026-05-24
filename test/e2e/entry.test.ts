@@ -118,6 +118,9 @@ export class Server {
     if (url.pathname === "/status-418") {
       return new Response("teapot", { status: 418 });
     }
+    if (url.pathname === "/will-404") {
+      return new Response("nf", { status: 404 });
+    }
     return new Response("ssr-default", { headers: { "x-handled-by": "stub" } });
   }
 }
@@ -128,7 +131,12 @@ export const manifest = { appPath: "_app" };
 export const prerendered = new Set(["/about"]);
 `;
 
-async function buildSyntheticTree(runtime: "node" | "bun", port: number, healthPath: string): Promise<string> {
+async function buildSyntheticTree(
+  runtime: "node" | "bun",
+  port: number,
+  healthPath: string,
+  fallback: string | null = null,
+): Promise<string> {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), `svelte-entry-${runtime}-`));
   // The entry imports `@sveltejs/kit/node` and the polyfill — resolved
   // from node_modules. Symlink the adapter's own node_modules into the
@@ -152,10 +160,18 @@ async function buildSyntheticTree(runtime: "node" | "bun", port: number, healthP
   await fs.mkdir(path.join(buildDir, "prerendered", "nested"), { recursive: true });
   await fs.writeFile(path.join(buildDir, "prerendered", "nested", "index.html"), "<h1>nested</h1>");
 
+  if (fallback) {
+    await fs.writeFile(
+      path.join(buildDir, "prerendered", fallback),
+      `<!doctype html><html><body data-shell="${fallback}">spa fallback shell</body></html>`,
+    );
+  }
+
   const template = await fs.readFile(path.join(ENTRY_SRC_DIR, `${runtime}.js`), "utf8");
   const entry = template
     .replace(/__CREEK_PORT__/g, String(port))
-    .replace(/__CREEK_HEALTH__/g, JSON.stringify(healthPath));
+    .replace(/__CREEK_HEALTH__/g, JSON.stringify(healthPath))
+    .replace(/__CREEK_FALLBACK__/g, fallback ? JSON.stringify(fallback) : "null");
   await fs.writeFile(path.join(buildDir, "index.js"), entry);
 
   // The entry imports `./runtime.js` (which transitively imports
@@ -238,9 +254,10 @@ interface Harness {
 async function bringUp(
   runtime: "node" | "bun",
   extraEnv: NodeJS.ProcessEnv = {},
+  fallback: string | null = null,
 ): Promise<Harness> {
   const port = await pickPort();
-  const tmp = await buildSyntheticTree(runtime, port, "/_creek/health");
+  const tmp = await buildSyntheticTree(runtime, port, "/_creek/health", fallback);
 
   const cmd = runtime === "node" ? process.execPath : "bun";
   const args = runtime === "node" ? ["build/index.js"] : ["run", "build/index.js"];
@@ -556,3 +573,58 @@ describeRuntime("node", true);
 // keeps the suite green on hosts without Bun (CI matrix can opt in).
 const hasBun = await bunAvailable();
 describeRuntime("bun", hasBun);
+
+// SPA fallback: a dedicated harness per runtime — the entry's FALLBACK
+// constant is baked in at template-substitution time, so we cannot
+// flip it on an already-running server.
+function describeFallback(
+  runtime: "node" | "bun",
+  available: boolean,
+  fallback: string,
+  expectedStatus: number,
+): void {
+  const d = available ? describe : describe.skip;
+  d(`entry: ${runtime} (fallback=${fallback})`, () => {
+    let h: Harness;
+
+    beforeAll(async () => {
+      h = await bringUp(runtime, {}, fallback);
+    }, 30_000);
+
+    afterAll(async () => {
+      if (h) await tearDown(h);
+    });
+
+    it(`serves fallback HTML on SSR 404 with status ${expectedStatus}`, async () => {
+      const res = await fetch(`${h.base}/will-404`);
+      expect(res.status).toBe(expectedStatus);
+      expect(res.headers.get("content-type") ?? "").toContain("text/html");
+      const body = await res.text();
+      expect(body).toContain("spa fallback shell");
+      expect(body).toContain(`data-shell="${fallback}"`);
+    });
+
+    it("does not override a 200 SSR response with the fallback", async () => {
+      const res = await fetch(`${h.base}/`);
+      expect(res.status).toBe(200);
+      const body = await res.text();
+      expect(body).toBe("ssr-default");
+    });
+
+    it("does not override a 418 SSR response with the fallback", async () => {
+      const res = await fetch(`${h.base}/status-418`);
+      expect(res.status).toBe(418);
+    });
+
+    it("prerendered hits still win over fallback", async () => {
+      const res = await fetch(`${h.base}/about`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toContain("<h1>about</h1>");
+    });
+  });
+}
+
+describeFallback("node", true, "200.html", 200);
+describeFallback("node", true, "404.html", 404);
+describeFallback("bun", hasBun, "200.html", 200);
+describeFallback("bun", hasBun, "404.html", 404);
