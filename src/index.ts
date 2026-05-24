@@ -50,16 +50,19 @@ export interface CreekdSvelteAdapterOptions {
    */
   precompress?: boolean;
   /**
-   * Bundle the entry + SvelteKit runtime into a single file (currently
-   * unimplemented — see ARCHITECTURE.md for the deployment-strategy
-   * discussion). Reserved on the API surface so P1's opt-in esbuild
-   * bundling can land without breaking changes.
+   * Bundle the entry into a single self-contained `build/index.js`
+   * via esbuild. When `"esbuild"`, the @sveltejs/kit/node helpers,
+   * polyfills, manifest data, and our runtime/cache modules are
+   * inlined; only `./server/*` (lazy-imported by kit's Server) and
+   * `bun:sqlite` stay external. Source maps are inlined so production
+   * stack traces remain readable.
    *
-   * P0 only accepts `false`. The default `false` path requires
-   * production `node_modules` on the target, exactly like
-   * `@sveltejs/adapter-node` does.
+   * The unbundled default (`false`) requires production `node_modules`
+   * on the target, exactly like `@sveltejs/adapter-node`. Pick
+   * `"esbuild"` when the deploy artifact size or `pnpm install` time
+   * on target is the bottleneck.
    */
-  bundle?: false;
+  bundle?: false | "esbuild";
   /**
    * SPA / catch-all HTML fallback filename. When set, `builder.generateFallback`
    * writes a static shell page at `<out>/prerendered/<fallback>` and the
@@ -106,9 +109,10 @@ export default function adapter(
   }
   const env = normalizeEnv(options.env);
   const precompress = options.precompress ?? true;
-  if (options.bundle !== undefined && options.bundle !== false) {
+  const bundle: false | "esbuild" = options.bundle ?? false;
+  if (bundle !== false && bundle !== "esbuild") {
     throw new Error(
-      "@solcreek/svelte-adapter: bundle option is reserved for a future release; pass false (default) until then",
+      `@solcreek/svelte-adapter: bundle must be false or "esbuild", got ${JSON.stringify(options.bundle)}`,
     );
   }
   const fallback = options.fallback;
@@ -132,6 +136,7 @@ export default function adapter(
         healthCheckPath,
         precompress,
         fallback,
+        bundle,
       });
     },
 

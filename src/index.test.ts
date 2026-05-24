@@ -35,10 +35,11 @@ describe("adapter factory", () => {
     expect(() => adapter({ env: ["BAD"] })).toThrow(/KEY=VALUE/);
   });
 
-  it("accepts bundle:false (default) and rejects any other value in P0", () => {
+  it("accepts bundle:false (default) and bundle:'esbuild'; rejects anything else", () => {
     expect(() => adapter({ bundle: false })).not.toThrow();
-    // bundle:"esbuild" is the planned P1 value; reject it until shipped.
-    expect(() => adapter({ bundle: "esbuild" as unknown as false })).toThrow(/bundle/);
+    expect(() => adapter({ bundle: "esbuild" })).not.toThrow();
+    expect(() => adapter({ bundle: true as unknown as false })).toThrow(/bundle/);
+    expect(() => adapter({ bundle: "rollup" as unknown as false })).toThrow(/bundle/);
   });
 
   it("accepts bare .html filenames for fallback and rejects paths", () => {
