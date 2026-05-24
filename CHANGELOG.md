@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-05-23
+
+### Added
+
+- `bundle: "esbuild"` adapter option. Inlines `@sveltejs/kit/node` +
+  polyfills + cache handler into a single `build/index.js` so the
+  deploy artifact ships **without** `node_modules` on target. The
+  kit `Server` module (`./server/*`) and Bun's `bun:sqlite` stay
+  external — server route loading still resolves relative to disk,
+  and Bun's built-in sqlite is loaded at runtime. Inline source maps
+  preserve production stack traces.
+- `src/bundle.ts` — standalone helper (`bundleEntry`,
+  `removeRuntimeFiles`) so the same code path is exercised from
+  both `adapt()` and the e2e test harness.
+
+### Notes
+
+- Real-fixture artifact size shrinks from ~30 MB (build/ + node_modules)
+  to ~832 KB (build/ only) — a ~36× reduction. The bundled
+  `build/index.js` grows from 12 KB → 108 KB but that's the only
+  file in the artifact that grows.
+- Native modules outside the kit server bundle (`better-sqlite3`,
+  `sharp`, etc.) are not auto-externalized yet — apps depending on
+  them should stay on `bundle: false` for now.
+- E2E coverage: bundled-entry smoke matrix runs on both node and
+  bun against health / client assets / prerendered / SSR /
+  cache round-trip / fallback. The bundled artifact MUST behave
+  identically to the unbundled one or the test suite fails.
+
 ## [0.7.0] - 2026-05-23
 
 ### Added

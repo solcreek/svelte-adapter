@@ -63,7 +63,8 @@ creekctl up --from .creek-creekd/manifest.json
 | `env` | `{ NODE_ENV: "production" }` | Written into the creekd manifest; `KEY=VALUE` strings or an object. NODE_ENV defaults to `production` unless overridden. |
 | `healthCheckPath` | `"/_creek/health"` | Always 200 before SvelteKit sees the request. Also recorded in the manifest as creekd's liveness probe. |
 | `precompress` | `true` | gzip + brotli on `client/` and `prerendered/`. |
-| `bundle` | `false` | Reserved for P1 — opt-in esbuild bundling. P0 only accepts `false`. See [Deployment](#deployment). |
+| `bundle` | `false` | `false` (deps stay in `node_modules` on target) or `"esbuild"` (self-contained `index.js`). See [Bundling](#bundling-via-esbuild). |
+| `fallback` | unset | SPA / catch-all HTML filename (e.g. `"200.html"`, `"404.html"`). See [SPA / catch-all fallback](#spa--catch-all-fallback). |
 
 ## `platform.cache` — persistent KV for SvelteKit (the differentiator vs `adapter-node`)
 
@@ -221,7 +222,7 @@ Run the benchmark yourself: `pnpm bench` (uses the fixture at `test/fixtures/rea
 
 ## Deployment
 
-This adapter does **not** bundle the entry — the runtime imports `@sveltejs/kit` from `node_modules`, exactly like `@sveltejs/adapter-node`. The deploy flow on a creekd VPS:
+Default mode (`bundle: false`) ships `build/` + `node_modules` to the target, exactly like `@sveltejs/adapter-node`:
 
 ```bash
 git pull
@@ -230,7 +231,34 @@ pnpm build
 creekctl up --from .creek-creekd/manifest.json
 ```
 
-The output tree (`build/` + `node_modules/`) is what creekd spawns. If your deployment strategy needs a single self-contained file (no `node_modules` on target), opt-in esbuild bundling is the P1 plan — until then this adapter is wrong for that shape.
+### Bundling via esbuild
+
+Opt in with `adapter({ bundle: "esbuild" })`. The adapter inlines `@sveltejs/kit/node` + polyfills + cache handler into a single `build/index.js` so the target needs **no `node_modules`**:
+
+```ts
+// svelte.config.js
+import adapter from "@solcreek/svelte-adapter";
+export default {
+  kit: { adapter: adapter({ bundle: "esbuild" }) },
+};
+```
+
+| | `bundle: false` | `bundle: "esbuild"` |
+|---|---:|---:|
+| `build/index.js` | 12 KB | 108 KB |
+| `build/` total | 748 KB | 832 KB |
+| `node_modules` on target | required (~30 MB) | not needed |
+| **Effective deploy artifact** | **~30 MB** | **~832 KB** |
+| `pnpm install` on target | needed | skipped |
+
+*Numbers from `test/fixtures/real-sveltekit/`. Inline source maps are included so production stack traces remain readable.*
+
+**What stays external**:
+- `./server/*` — kit's `Server` dynamically imports route modules relative to its own location, so the server bundle must stay on disk under `build/server/`. Inlining it would break route loading at runtime.
+- `bun:sqlite` — Bun built-in, resolved at runtime (no npm package).
+- `node:*` — Node built-ins.
+
+**What's not handled automatically**: native modules outside the kit server bundle (`better-sqlite3`, `sharp`, `@node-rs/*`, prebuilt `.node` binaries). If your app needs these, stick with `bundle: false` for now — extension of the externals list is a later iteration.
 
 ## Comparison with `@sveltejs/adapter-node`
 
@@ -238,7 +266,7 @@ The output tree (`build/` + `node_modules/`) is what creekd spawns. If your depl
 |---|---|---|
 | Env-var surface (PORT, HOST, ORIGIN, PROTOCOL_HEADER, BODY_SIZE_LIMIT, …) | ✓ | ✓ identical |
 | `sveltekit:shutdown` event contract | ✓ | ✓ identical |
-| `node_modules` on target | required | required |
+| `node_modules` on target | required | required by default, **skippable with `bundle: "esbuild"`** |
 | Bun runtime support | — | ✓ first-class (`runtime: "bun"`) |
 | Polka HTTP server | yes | — direct `node:http` / `Bun.serve`, no extra dep |
 | Creekd process manifest (`.creek-creekd/manifest.json`) | — | ✓ `creekctl up --from` reads it |
