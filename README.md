@@ -153,6 +153,31 @@ process.on("sveltekit:shutdown", async (reason) => {
 });
 ```
 
+### Instrumentation (SvelteKit 2.31+)
+
+If you provide `src/instrumentation.server.ts`, this adapter wraps the generated entry so the instrumentation module loads **before** any application code — required for OpenTelemetry auto-instrumentation, logger init, DB pool warm-up, etc. No configuration needed; enable the kit feature in `svelte.config.js`:
+
+```ts
+// svelte.config.js
+export default {
+  kit: {
+    experimental: { instrumentation: { server: true } },
+    adapter: adapter(),
+  },
+};
+```
+
+```ts
+// src/instrumentation.server.ts
+import { NodeSDK } from "@opentelemetry/sdk-node";
+import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentations-node";
+
+const sdk = new NodeSDK({ instrumentations: [getNodeAutoInstrumentations()] });
+sdk.start();
+```
+
+Caveats inherited from kit's `builder.instrument()`: "live exports" do not work (none in this adapter's entry), and OTel auto-instrumentation needs top-level-await runtime support (Node 14.8+ / Bun — always satisfied here).
+
 ## Benchmark vs `@sveltejs/adapter-node`
 
 Same minimal SvelteKit fixture, same Node version, same hardware, 2000 requests at concurrency 10. `/bench/slow` simulates a 50 ms backend dependency; `/bench/cached` wraps it in `platform.cache.cached`.

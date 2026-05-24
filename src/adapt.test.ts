@@ -10,6 +10,7 @@ type Builder = import("@sveltejs/kit").Builder;
 
 interface MockOptions {
   prerenderedPaths?: string[];
+  hasInstrumentation?: boolean;
 }
 
 function createMockBuilder(opts: MockOptions = {}): Builder {
@@ -59,6 +60,8 @@ function createMockBuilder(opts: MockOptions = {}): Builder {
     compress: vi.fn(async () => {}),
     config: {} as Builder["config"],
     getBuildDirectory: vi.fn((name: string) => `.svelte-kit/${name}`),
+    hasServerInstrumentationFile: vi.fn(() => opts.hasInstrumentation ?? false),
+    instrument: vi.fn(() => {}),
   };
   return builder as unknown as Builder;
 }
@@ -232,6 +235,36 @@ describe("adapt", () => {
       precompress: false,
     });
     expect(builder.generateEnvModule).toHaveBeenCalledTimes(1);
+  });
+
+  it("wraps entry via builder.instrument when instrumentation.server file exists", async () => {
+    const builder = createMockBuilder({ hasInstrumentation: true });
+    await adapt(builder, {
+      outDir: "build",
+      runtime: "node",
+      port: 3000,
+      env: [],
+      healthCheckPath: "/_creek/health",
+      precompress: false,
+    });
+    expect(builder.instrument).toHaveBeenCalledTimes(1);
+    expect(builder.instrument).toHaveBeenCalledWith({
+      entrypoint: path.join(tmp, "build", "index.js"),
+      instrumentation: path.join(tmp, "build", "server", "instrumentation.server.js"),
+    });
+  });
+
+  it("does not call builder.instrument when user has no instrumentation file", async () => {
+    const builder = createMockBuilder({ hasInstrumentation: false });
+    await adapt(builder, {
+      outDir: "build",
+      runtime: "node",
+      port: 3000,
+      env: [],
+      healthCheckPath: "/_creek/health",
+      precompress: false,
+    });
+    expect(builder.instrument).not.toHaveBeenCalled();
   });
 
   it("reports hasPrerender=false when no pages were prerendered", async () => {

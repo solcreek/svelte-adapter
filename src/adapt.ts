@@ -128,12 +128,27 @@ export async function adapt(
     opts.port,
     opts.healthCheckPath,
   );
-  await fs.writeFile(path.join(out, "index.js"), entrySource);
+  const entryPath = path.join(out, "index.js");
+  await fs.writeFile(entryPath, entrySource);
 
   // The entry imports from "./runtime.js" — make those files available
   // next to it so the build output runs without @solcreek/* in
   // node_modules on target.
   await copyRuntimeModules(out, builder.log);
+
+  // If the user provides `src/instrumentation.server.ts`, writeServer has
+  // already emitted the compiled `instrumentation.server.js` into
+  // serverDir. builder.instrument() rewrites our entry into a TLA shim
+  // that imports the instrumentation module before dynamically importing
+  // the real entry — guaranteeing OTel/logging hooks install before any
+  // application code runs.
+  if (builder.hasServerInstrumentationFile?.()) {
+    builder.log.minor("Wrapping entry with instrumentation.server");
+    builder.instrument({
+      entrypoint: entryPath,
+      instrumentation: path.join(serverDir, "instrumentation.server.js"),
+    });
+  }
 
   if (opts.precompress) {
     builder.log.minor("Compressing client + prerendered assets");

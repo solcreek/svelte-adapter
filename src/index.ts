@@ -122,6 +122,10 @@ export default function adapter(
       // $app/server `read()` works on both bun and node: the entry
       // wires builder.init({ read }) to read from server/<file>.
       read: () => true,
+      // `instrumentation.server.js` runs before app code: adapt() asks
+      // builder.instrument() to wrap our entry with a TLA shim that
+      // imports the compiled instrumentation file before the real entry.
+      instrumentation: () => true,
     },
 
     // Inject platform.cache during `vite dev` and prerender so user
