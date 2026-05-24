@@ -136,6 +136,7 @@ async function buildSyntheticTree(
   port: number,
   healthPath: string,
   fallback: string | null = null,
+  bundle: "esbuild" | null = null,
 ): Promise<string> {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), `svelte-entry-${runtime}-`));
   // The entry imports `@sveltejs/kit/node` and the polyfill — resolved
@@ -178,6 +179,20 @@ async function buildSyntheticTree(
   // ./cache-handler.js) — mirror what adapt() does in production.
   for (const f of RUNTIME_FILES) {
     await fs.copyFile(path.join(ADAPTER_DIST_DIR, f), path.join(buildDir, f));
+  }
+
+  // Bundled path: invoke the same bundle helper adapt() uses, then
+  // remove the now-inlined runtime source copies. The bundled entry
+  // lives at the same path so the spawn command doesn't change.
+  if (bundle === "esbuild") {
+    const { bundleEntry, removeRuntimeFiles } = await import("../../dist/bundle.js");
+    await bundleEntry({
+      entry: path.join(buildDir, "index.js"),
+      outFile: path.join(buildDir, "index.js"),
+      runtime,
+      absWorkingDir: tmp,
+    });
+    await removeRuntimeFiles(buildDir);
   }
 
   return tmp;
@@ -255,9 +270,10 @@ async function bringUp(
   runtime: "node" | "bun",
   extraEnv: NodeJS.ProcessEnv = {},
   fallback: string | null = null,
+  bundle: "esbuild" | null = null,
 ): Promise<Harness> {
   const port = await pickPort();
-  const tmp = await buildSyntheticTree(runtime, port, "/_creek/health", fallback);
+  const tmp = await buildSyntheticTree(runtime, port, "/_creek/health", fallback, bundle);
 
   const cmd = runtime === "node" ? process.execPath : "bun";
   const args = runtime === "node" ? ["build/index.js"] : ["run", "build/index.js"];
@@ -628,3 +644,74 @@ describeFallback("node", true, "200.html", 200);
 describeFallback("node", true, "404.html", 404);
 describeFallback("bun", hasBun, "200.html", 200);
 describeFallback("bun", hasBun, "404.html", 404);
+
+// Bundled-entry smoke matrix: bundle the entry via esbuild, spawn,
+// re-run the most load-bearing happy-path / fallback assertions. The
+// bundled artifact MUST behave identically to the unbundled one or
+// users opting into bundle:"esbuild" will silently regress.
+function describeBundled(runtime: "node" | "bun", available: boolean): void {
+  const d = available ? describe : describe.skip;
+  d(`entry: ${runtime} (bundled via esbuild)`, () => {
+    let h: Harness;
+
+    beforeAll(async () => {
+      h = await bringUp(runtime, {}, "200.html", "esbuild");
+    }, 60_000);
+
+    afterAll(async () => {
+      if (h) await tearDown(h);
+    });
+
+    it("entry was actually bundled (runtime.js + cache-handler.js removed)", async () => {
+      const { existsSync } = await import("node:fs");
+      expect(existsSync(path.join(h.tmp, "build", "runtime.js"))).toBe(false);
+      expect(existsSync(path.join(h.tmp, "build", "cache-handler.js"))).toBe(false);
+      // server/, manifest.js, prerendered/, client/ must remain.
+      expect(existsSync(path.join(h.tmp, "build", "manifest.js"))).toBe(true);
+      expect(existsSync(path.join(h.tmp, "build", "server", "index.js"))).toBe(true);
+    });
+
+    it("health probe returns 200 ok", async () => {
+      const res = await fetch(`${h.base}/_creek/health`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("ok");
+    });
+
+    it("serves client assets", async () => {
+      const res = await fetch(`${h.base}/marker.txt`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("client-marker");
+    });
+
+    it("serves prerendered HTML", async () => {
+      const res = await fetch(`${h.base}/about`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toContain("<h1>about</h1>");
+    });
+
+    it("routes through the SSR Server", async () => {
+      const res = await fetch(`${h.base}/anything`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("ssr-default");
+      expect(res.headers.get("x-handled-by")).toBe("stub");
+    });
+
+    it("cache (inlined cache-handler) round-trips via SSR", async () => {
+      const set = await fetch(`${h.base}/cache/set?key=bundled-key&value=bundled-val`);
+      expect(set.status).toBe(200);
+      const get = await fetch(`${h.base}/cache/get?key=bundled-key`);
+      expect(await get.text()).toBe("bundled-val");
+    });
+
+    it("fallback HTML still serves on SSR 404 after bundling", async () => {
+      const res = await fetch(`${h.base}/will-404`);
+      expect(res.status).toBe(200);
+      const body = await res.text();
+      expect(body).toContain("spa fallback shell");
+      expect(body).toContain(`data-shell="200.html"`);
+    });
+  });
+}
+
+describeBundled("node", true);
+describeBundled("bun", hasBun);

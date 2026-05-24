@@ -359,6 +359,111 @@ describe("adapt", () => {
     expect(entry).not.toContain("__CREEK_FALLBACK__");
   });
 
+  describe("bundle: 'esbuild'", () => {
+    // esbuild's bundle pass needs `@sveltejs/kit/node` resolvable from
+    // the build entry. The harness tmp has no node_modules; symlink
+    // the adapter's own (which has kit as a devDep) so node-resolution
+    // walks UP from build/index.js → tmp/node_modules → kit. Mirrors
+    // what the e2e harness does for the same reason.
+    const ADAPTER_NODE_MODULES = path.resolve(__dirname, "..", "node_modules");
+    beforeEach(async () => {
+      await fs.symlink(ADAPTER_NODE_MODULES, path.join(tmp, "node_modules"), "dir");
+    });
+
+    it("inlines runtime imports and removes the on-disk runtime files", async () => {
+      const builder = createMockBuilder();
+      await adapt(builder, {
+        outDir: "build",
+        runtime: "node",
+        port: 3000,
+        env: [],
+        healthCheckPath: "/_creek/health",
+        precompress: false,
+        bundle: "esbuild",
+      });
+
+      const entry = await fs.readFile(path.join(tmp, "build", "index.js"), "utf8");
+      // The placeholder substitutions still landed BEFORE bundling.
+      expect(entry).not.toContain("__CREEK_PORT__");
+      // After bundling, the relative ./runtime.js import is inlined —
+      // the literal string must not survive (would mean the bundler
+      // left it external, which would break at runtime).
+      expect(entry).not.toMatch(/from\s+["']\.\/runtime\.js["']/);
+      expect(entry).not.toMatch(/from\s+["']\.\/cache-handler\.js["']/);
+      // @sveltejs/kit/node helpers are inlined too — the bare specifier
+      // must not appear as a top-level import in the bundled output.
+      expect(entry).not.toMatch(/^import\s+.*from\s+["']@sveltejs\/kit\/node["']/m);
+      // ./server/index.js MUST stay external (kit's Server dynamically
+      // imports route modules relative to its own location). Its
+      // dynamic import string survives in the bundle in some shape;
+      // we don't assert presence — we assert the dead source files are
+      // gone so the artifact reflects the new shape.
+      const { existsSync: ex } = await import("node:fs");
+      expect(ex(path.join(tmp, "build", "runtime.js"))).toBe(false);
+      expect(ex(path.join(tmp, "build", "cache-handler.js"))).toBe(false);
+      expect(ex(path.join(tmp, "build", "cache-handler-sqlite.js"))).toBe(false);
+      // server/, manifest.js, prerendered/ must NOT be removed.
+      expect(ex(path.join(tmp, "build", "manifest.js"))).toBe(true);
+      expect(ex(path.join(tmp, "build", "server", "index.js"))).toBe(true);
+    });
+
+    it("does not touch runtime files when bundle is false (default)", async () => {
+      const builder = createMockBuilder();
+      await adapt(builder, {
+        outDir: "build",
+        runtime: "node",
+        port: 3000,
+        env: [],
+        healthCheckPath: "/_creek/health",
+        precompress: false,
+      });
+      const { existsSync: ex } = await import("node:fs");
+      expect(ex(path.join(tmp, "build", "runtime.js"))).toBe(true);
+      expect(ex(path.join(tmp, "build", "cache-handler.js"))).toBe(true);
+    });
+
+    it("includes inline sourcemap so production stack traces stay readable", async () => {
+      const builder = createMockBuilder();
+      await adapt(builder, {
+        outDir: "build",
+        runtime: "node",
+        port: 3000,
+        env: [],
+        healthCheckPath: "/_creek/health",
+        precompress: false,
+        bundle: "esbuild",
+      });
+      const entry = await fs.readFile(path.join(tmp, "build", "index.js"), "utf8");
+      expect(entry).toMatch(/sourceMappingURL=data:application\/json;base64,/);
+    });
+
+    it("produces a noticeably larger entry than the unbundled stub (bundling actually happened)", async () => {
+      await adapt(createMockBuilder(), {
+        outDir: "buildA",
+        runtime: "node",
+        port: 3000,
+        env: [],
+        healthCheckPath: "/_creek/health",
+        precompress: false,
+      });
+      await adapt(createMockBuilder(), {
+        outDir: "buildB",
+        runtime: "node",
+        port: 3000,
+        env: [],
+        healthCheckPath: "/_creek/health",
+        precompress: false,
+        bundle: "esbuild",
+      });
+      const unbundled = (await fs.stat(path.join(tmp, "buildA", "index.js"))).size;
+      const bundled = (await fs.stat(path.join(tmp, "buildB", "index.js"))).size;
+      // The bundled entry inlines @sveltejs/kit/node + polyfills +
+      // cache handler. Even excluding the stub server it should be
+      // an order of magnitude larger than the bare entry template.
+      expect(bundled).toBeGreaterThan(unbundled * 5);
+    });
+  });
+
   it("wraps entry via builder.instrument when instrumentation.server file exists", async () => {
     const builder = createMockBuilder({ hasInstrumentation: true });
     await adapt(builder, {
