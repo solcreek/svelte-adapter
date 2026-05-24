@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { writeManifest, type SvelteAdapterRuntime } from "./manifest.js";
+import { bundleEntry, removeRuntimeFiles } from "./bundle.js";
 
 // `Builder` ships with @sveltejs/kit but only as a type; the adapter is
 // invoked by SvelteKit which hands us the live instance, so importing
@@ -23,6 +24,8 @@ export interface AdaptOptions {
   precompress: boolean;
   /** SPA fallback HTML filename written into prerenderedDir, or undefined. */
   fallback?: string;
+  /** When "esbuild", bundle the generated entry into a self-contained file. */
+  bundle?: false | "esbuild";
 }
 
 const ENTRY_FILES: Record<SvelteAdapterRuntime, string> = {
@@ -190,6 +193,26 @@ export async function adapt(
       entrypoint: entryPath,
       instrumentation: path.join(serverDir, "instrumentation.server.js"),
     });
+  }
+
+  // Optional esbuild pass: inline the kit/node helpers + our runtime
+  // modules into a single self-contained index.js. ./server/* stays
+  // external because kit's Server dynamically imports route modules
+  // relative to its own location on disk.
+  if (opts.bundle === "esbuild") {
+    builder.log.minor("Bundling entry via esbuild");
+    await bundleEntry({
+      entry: entryPath,
+      outFile: entryPath,
+      runtime: opts.runtime,
+      // Resolve @sveltejs/kit/* from the user's project node_modules
+      // (where pnpm/npm installed the kit peer dep), not from the
+      // build output directory which has no node_modules.
+      absWorkingDir: projectDir,
+    });
+    // runtime.js + cache-handler*.js are inlined now; the on-disk copies
+    // are dead weight. Removing them keeps the artifact honest.
+    await removeRuntimeFiles(out);
   }
 
   if (opts.precompress) {
