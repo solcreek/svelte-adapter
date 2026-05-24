@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-23
+
+### Added
+
+- Server instrumentation support (SvelteKit 2.31+). When the user provides
+  `src/instrumentation.server.ts` and enables
+  `kit.experimental.instrumentation.server`, the adapter declares
+  `supports.instrumentation: () => true` and calls `builder.instrument()`
+  to wrap the generated entry — the instrumentation module loads before
+  any application code, as required for OpenTelemetry auto-instrumentation,
+  logger init, etc. No configuration on the adapter side; no changes to
+  `entries/{node,bun}.js` (kit's rewriter handles the TLA shim).
+
+## [0.4.0] - 2026-05-23
+
+### Changed
+
+- Manifest contract types now come from `@solcreek/creekd-manifest`
+  directly (was: `@solcreek/adapter-core`). Part of the ecosystem split
+  that retired `adapter-core` as a shim. No runtime behaviour change.
+
 ## [0.3.0] - 2026-05-22
 
 A verification-and-validation release. No user-facing API changes since
