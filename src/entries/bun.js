@@ -33,6 +33,7 @@ const cache = createCache({
   dir: process.env.CREEK_SVELTE_CACHE_DIR,
   l1Entries: Number(process.env.CREEK_SVELTE_CACHE_L1) || undefined,
   inMemoryOnly: process.env.CREEK_SVELTE_CACHE_DISABLED === "1",
+  driver: process.env.CREEK_SVELTE_CACHE_DRIVER,
 });
 
 const server = new Server(manifest);

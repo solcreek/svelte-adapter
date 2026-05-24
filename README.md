@@ -94,11 +94,20 @@ export async function POST({ platform, request }) {
 
 **Implementation:**
 - **L1**: in-process LRU (insertion-order Map; default 2048 entries)
-- **L2**: filesystem JSON at `$CREEK_SVELTE_CACHE_DIR/entries/<hash[0:2]>/<hash>.json`, atomic write via tmp+rename
-- **Tags**: per-tag `tags/<safe>.json` sentinel with `{ invalidatedAt }`; entries are stale if any of their tags was invalidated after `entry.createdAt`
+- **L2**: pluggable driver. `bun-sqlite` on Bun (single `cache.sqlite` with WAL); `fs` on Node (one JSON per entry under `$CREEK_SVELTE_CACHE_DIR/entries/<hash[0:2]>/<hash>.json`, atomic via tmp+rename). `auto` (default) picks the right one at startup.
+- **Tags**: per-tag invalidation sentinel `{ invalidatedAt }`; entries are stale if any of their tags was invalidated after `entry.createdAt`. Stored as a `tags` row in sqlite, as `tags/<safe>.json` in fs.
 - **SWR**: `cached()` returns stale data while a background loader refreshes; coalesces concurrent misses for the same key
 - **Dev parity**: `adapter.emulate()` provides the same cache in `vite dev` and prerender via `event.platform.cache` — no `if (import.meta.env.DEV)` branches needed
-- **Graceful shutdown**: cache is closed (in-flight writes flushed) after `sveltekit:shutdown` listeners run
+- **Graceful shutdown**: cache is closed (in-flight writes flushed; sqlite WAL checkpointed) after `sveltekit:shutdown` listeners run
+
+**L2 driver microbench** (1000 set + 1000 cold-L2 get, Bun 1.3, M-series macOS):
+
+| Driver | set/s | get/s |
+|---|---:|---:|
+| `fs` | 4,573 | 31,984 |
+| `bun-sqlite` | **28,082** | **232,518** |
+
+~6× write throughput, ~7× read throughput. The fs driver isn't slow in absolute terms — sqlite just avoids the per-entry `mkdir`/`tmp`/`rename` syscall trio and WAL gives durable writes without per-write fsync. The fs driver remains the only choice on Node.
 
 ### Cache env vars
 
@@ -106,6 +115,7 @@ export async function POST({ platform, request }) {
 |---|---|---|
 | `CREEK_SVELTE_CACHE_DIR` | `.creek/svelte-cache` (relative to cwd) | L2 directory |
 | `CREEK_SVELTE_CACHE_L1` | `2048` | L1 LRU capacity (entries) |
+| `CREEK_SVELTE_CACHE_DRIVER` | `auto` | Force a specific L2 driver: `fs`, `bun-sqlite`, or `auto`. Pinning to `fs` on Bun is the migration escape hatch if a sqlite issue surfaces. |
 | `CREEK_SVELTE_CACHE_DISABLED` | unset | When `=1`, skip L2 entirely (in-memory only) |
 
 ### App.Platform typing
