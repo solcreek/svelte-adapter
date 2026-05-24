@@ -1,5 +1,11 @@
 # @solcreek/svelte-adapter
 
+[![npm](https://img.shields.io/npm/v/@solcreek/svelte-adapter?logo=npm&label=npm)](https://www.npmjs.com/package/@solcreek/svelte-adapter)
+[![CI](https://img.shields.io/github/actions/workflow/status/solcreek/svelte-adapter/ci.yml?branch=main&label=CI&logo=github)](https://github.com/solcreek/svelte-adapter/actions/workflows/ci.yml)
+[![Kit canary](https://img.shields.io/github/actions/workflow/status/solcreek/svelte-adapter/kit-canary.yml?branch=main&label=kit%20canary&logo=svelte)](https://github.com/solcreek/svelte-adapter/actions/workflows/kit-canary.yml)
+[![SvelteKit](https://img.shields.io/badge/SvelteKit-%E2%89%A5%202.0-ff3e00?logo=svelte)](https://kit.svelte.dev)
+[![License](https://img.shields.io/npm/l/@solcreek/svelte-adapter?color=blue)](./LICENSE)
+
 SvelteKit deployment adapter for [`@solcreek/creekd`](https://github.com/solcreek/creekd) self-host. Produces a runnable HTTP server entry + a `.creek-creekd/manifest.json` describing the supervised process, so `creekctl up --from .creek-creekd/manifest.json` knows exactly what to spawn.
 
 Pairs creekd's neutral process supervisor (cgroups, namespaces, dispatch, health probes) with SvelteKit-shaped defaults: prerendered fast-path, hashed-asset immutable caching, `X-Forwarded-*` aware URL rebuilding, `sveltekit:shutdown` graceful drain.
