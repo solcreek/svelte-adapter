@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-23
+
+### Added
+
+- `bun:sqlite` L2 cache driver. `event.platform.cache` now picks
+  `bun-sqlite` automatically on Bun and `fs` on Node; pin via
+  `CREEK_SVELTE_CACHE_DRIVER=fs|bun-sqlite|auto`. Microbench shows
+  ~6× write throughput and ~7× read throughput vs the fs driver on
+  Bun 1.3 / M-series macOS at N=1000.
+- `scripts/bench-cache-driver.mjs` — standalone microbench to
+  reproduce the L2-driver numbers on your hardware.
+
+### Changed
+
+- `cache-handler.ts` refactored to a driver-based architecture: an
+  internal `L2Driver` interface, an `FsL2Driver` that holds the
+  existing filesystem logic, and `BunSqliteL2Driver` in a new
+  `cache-handler-sqlite.ts`. Driver init is lazy so `createCache()`
+  stays sync. No behaviour change for existing fs users.
+
 ## [0.5.0] - 2026-05-23
 
 ### Added

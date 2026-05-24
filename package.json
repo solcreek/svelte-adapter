@@ -1,6 +1,6 @@
 {
   "name": "@solcreek/svelte-adapter",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "SvelteKit deployment adapter for @solcreek/creekd self-host (Bun / Node runtime)",
   "type": "module",
   "main": "./dist/index.js",
