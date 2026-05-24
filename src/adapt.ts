@@ -21,6 +21,8 @@ export interface AdaptOptions {
   env: string[];
   healthCheckPath: string;
   precompress: boolean;
+  /** SPA fallback HTML filename written into prerenderedDir, or undefined. */
+  fallback?: string;
 }
 
 const ENTRY_FILES: Record<SvelteAdapterRuntime, string> = {
@@ -76,15 +78,17 @@ async function renderEntry(
   runtime: SvelteAdapterRuntime,
   port: number,
   healthCheckPath: string,
+  fallback: string | undefined,
 ): Promise<string> {
   const templatePath = path.join(entriesDir(), ENTRY_FILES[runtime]);
   const template = await fs.readFile(templatePath, "utf8");
 
   // Replace placeholder constants. JSON.stringify keeps strings quoted
-  // and escapes anything weird in healthCheckPath.
+  // and escapes anything weird in healthCheckPath / fallback.
   return template
     .replace(/__CREEK_PORT__/g, String(port))
-    .replace(/__CREEK_HEALTH__/g, JSON.stringify(healthCheckPath));
+    .replace(/__CREEK_HEALTH__/g, JSON.stringify(healthCheckPath))
+    .replace(/__CREEK_FALLBACK__/g, JSON.stringify(fallback ?? null));
 }
 
 export async function adapt(
@@ -108,8 +112,41 @@ export async function adapt(
   builder.log.minor("Writing server bundle");
   builder.writeServer(serverDir);
 
+  // findServerAssets returns paths (relative to serverDir) for assets
+  // imported by server code — things like `import logo from './logo.png'`
+  // from a +page.server.ts. writeServer typically emits these already
+  // when using the default Vite pipeline; the copy is defensive for
+  // setups where it doesn't (and is a no-op when bytes already match).
+  // We don't bundle, so the assets must live next to the server code
+  // so the entry's `read()` callback (init({ read })) can find them.
+  const serverAssets = builder.findServerAssets(builder.routes);
+  if (serverAssets.length > 0) {
+    builder.log.minor(`Copying ${serverAssets.length} server-imported asset(s)`);
+    const srcDir = builder.getServerDirectory();
+    for (const asset of serverAssets) {
+      const src = path.join(srcDir, asset);
+      const dest = path.join(serverDir, asset);
+      await fs.mkdir(path.dirname(dest), { recursive: true });
+      await fs.copyFile(src, dest).catch((err) => {
+        // The source can be missing when writeServer already inlined
+        // the asset into the bundle — log and continue rather than
+        // hard-failing on a likely-fine condition.
+        builder.log.warn(
+          `[@solcreek/svelte-adapter] could not copy server asset ${asset}: ${(err as Error).message}`,
+        );
+      });
+    }
+  }
+
   builder.log.minor("Writing prerendered pages");
   builder.writePrerendered(prerenderedDir);
+
+  // SPA / catch-all shell. The server entry reads this on SSR 404
+  // and returns it with status derived from the filename.
+  if (opts.fallback) {
+    builder.log.minor(`Generating fallback ${opts.fallback}`);
+    await builder.generateFallback(path.join(prerenderedDir, opts.fallback));
+  }
 
   // $env/dynamic/public needs a build-time module so the values land in
   // the client bundle at the right place. adapter-node calls this from
@@ -131,6 +168,7 @@ export async function adapt(
     opts.runtime,
     opts.port,
     opts.healthCheckPath,
+    opts.fallback,
   );
   const entryPath = path.join(out, "index.js");
   await fs.writeFile(entryPath, entrySource);

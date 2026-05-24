@@ -11,6 +11,8 @@ type Builder = import("@sveltejs/kit").Builder;
 interface MockOptions {
   prerenderedPaths?: string[];
   hasInstrumentation?: boolean;
+  serverAssets?: string[];
+  serverAssetSourceDir?: string;
 }
 
 function createMockBuilder(opts: MockOptions = {}): Builder {
@@ -62,6 +64,12 @@ function createMockBuilder(opts: MockOptions = {}): Builder {
     getBuildDirectory: vi.fn((name: string) => `.svelte-kit/${name}`),
     hasServerInstrumentationFile: vi.fn(() => opts.hasInstrumentation ?? false),
     instrument: vi.fn(() => {}),
+    findServerAssets: vi.fn(() => opts.serverAssets ?? []),
+    getServerDirectory: vi.fn(() => opts.serverAssetSourceDir ?? ""),
+    generateFallback: vi.fn(async (dest: string) => {
+      mkdirSync(path.dirname(dest), { recursive: true });
+      writeFileSync(dest, "<!doctype html><html><body>fallback shell</body></html>");
+    }),
   };
   return builder as unknown as Builder;
 }
@@ -235,6 +243,120 @@ describe("adapt", () => {
       precompress: false,
     });
     expect(builder.generateEnvModule).toHaveBeenCalledTimes(1);
+  });
+
+  it("copies server-imported assets reported by findServerAssets into serverDir", async () => {
+    // Stage source assets in a fake "server output" dir that the
+    // builder reports via getServerDirectory().
+    const srcServerDir = await fs.mkdtemp(path.join(os.tmpdir(), "adapt-srv-"));
+    await fs.mkdir(path.join(srcServerDir, "nested"), { recursive: true });
+    await fs.writeFile(path.join(srcServerDir, "logo.png"), "PNG-BYTES");
+    await fs.writeFile(path.join(srcServerDir, "nested", "data.json"), '{"a":1}');
+
+    const builder = createMockBuilder({
+      serverAssets: ["logo.png", "nested/data.json"],
+      serverAssetSourceDir: srcServerDir,
+    });
+    await adapt(builder, {
+      outDir: "build",
+      runtime: "node",
+      port: 3000,
+      env: [],
+      healthCheckPath: "/_creek/health",
+      precompress: false,
+    });
+
+    expect(builder.findServerAssets).toHaveBeenCalledWith(builder.routes);
+    expect(
+      await fs.readFile(path.join(tmp, "build", "server", "logo.png"), "utf8"),
+    ).toBe("PNG-BYTES");
+    expect(
+      await fs.readFile(path.join(tmp, "build", "server", "nested", "data.json"), "utf8"),
+    ).toBe('{"a":1}');
+
+    await fs.rm(srcServerDir, { recursive: true, force: true });
+  });
+
+  it("does not call findServerAssets results when none reported", async () => {
+    const builder = createMockBuilder();
+    await adapt(builder, {
+      outDir: "build",
+      runtime: "node",
+      port: 3000,
+      env: [],
+      healthCheckPath: "/_creek/health",
+      precompress: false,
+    });
+    expect(builder.findServerAssets).toHaveBeenCalledTimes(1);
+    // getServerDirectory should not be hit when there's nothing to copy.
+    expect(builder.getServerDirectory).not.toHaveBeenCalled();
+  });
+
+  it("generates fallback HTML in prerenderedDir when fallback option set", async () => {
+    const builder = createMockBuilder();
+    await adapt(builder, {
+      outDir: "build",
+      runtime: "node",
+      port: 3000,
+      env: [],
+      healthCheckPath: "/_creek/health",
+      precompress: false,
+      fallback: "200.html",
+    });
+    expect(builder.generateFallback).toHaveBeenCalledTimes(1);
+    expect(builder.generateFallback).toHaveBeenCalledWith(
+      path.join(tmp, "build", "prerendered", "200.html"),
+    );
+    const html = await fs.readFile(path.join(tmp, "build", "prerendered", "200.html"), "utf8");
+    expect(html).toContain("fallback shell");
+  });
+
+  it("does not call generateFallback when fallback unset", async () => {
+    const builder = createMockBuilder();
+    await adapt(builder, {
+      outDir: "build",
+      runtime: "node",
+      port: 3000,
+      env: [],
+      healthCheckPath: "/_creek/health",
+      precompress: false,
+    });
+    expect(builder.generateFallback).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["200.html", "200"],
+    ["404.html", "404"],
+    ["index.html", "200"],
+  ] as const)("substitutes fallback filename %s into entry as JSON string", async (fallback) => {
+    const builder = createMockBuilder();
+    await adapt(builder, {
+      outDir: "build",
+      runtime: "node",
+      port: 3000,
+      env: [],
+      healthCheckPath: "/_creek/health",
+      precompress: false,
+      fallback,
+    });
+    const entry = await fs.readFile(path.join(tmp, "build", "index.js"), "utf8");
+    expect(entry).toContain(`"${fallback}"`);
+    expect(entry).not.toContain("__CREEK_FALLBACK__");
+  });
+
+  it("entry placeholder __CREEK_FALLBACK__ becomes null when fallback unset", async () => {
+    const builder = createMockBuilder();
+    await adapt(builder, {
+      outDir: "build",
+      runtime: "node",
+      port: 3000,
+      env: [],
+      healthCheckPath: "/_creek/health",
+      precompress: false,
+    });
+    const entry = await fs.readFile(path.join(tmp, "build", "index.js"), "utf8");
+    expect(entry).toContain("const FALLBACK = null;");
+    expect(entry).not.toContain("__CREEK_FALLBACK__");
   });
 
   it("wraps entry via builder.instrument when instrumentation.server file exists", async () => {
